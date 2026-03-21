@@ -1,0 +1,76 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\AgentConfig;
+use App\Models\PhoneNumber;
+use App\Models\Tenant;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+
+class AgentSettingsController extends Controller
+{
+    public function update(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'tenant_name' => ['required', 'string', 'max:255'],
+            'agent_name' => ['required', 'string', 'max:255'],
+            'welcome_message' => ['required', 'string', 'max:1000'],
+            'after_hours_message' => ['required', 'string', 'max:1000'],
+            'faq_content' => ['nullable', 'string', 'max:5000'],
+            'transfer_phone_number' => ['nullable', 'string', 'max:30'],
+            'notification_email' => ['required', 'email', 'max:255'],
+            'opens_at' => ['nullable', 'date_format:H:i'],
+            'closes_at' => ['nullable', 'date_format:H:i'],
+            'phone_number' => ['nullable', 'string', 'max:30'],
+            'business_days' => ['array'],
+            'business_days.*' => ['string'],
+        ]);
+
+        $tenant = $request->user()->tenant ?? Tenant::firstOrCreate(
+            ['slug' => str($validated['tenant_name'])->slug()->toString()],
+            [
+                'name' => $validated['tenant_name'],
+                'locale' => 'fr-BE',
+                'timezone' => 'Europe/Brussels',
+            ],
+        );
+
+        if (! $request->user()->tenant_id) {
+            $request->user()->forceFill(['tenant_id' => $tenant->id])->save();
+        }
+
+        $tenant->update([
+            'name' => $validated['tenant_name'],
+            'slug' => str($validated['tenant_name'])->slug()->toString(),
+        ]);
+
+        AgentConfig::updateOrCreate(
+            ['tenant_id' => $tenant->id],
+            [
+                'agent_name' => $validated['agent_name'],
+                'welcome_message' => $validated['welcome_message'],
+                'after_hours_message' => $validated['after_hours_message'],
+                'faq_content' => $validated['faq_content'] ?? null,
+                'transfer_phone_number' => $validated['transfer_phone_number'] ?: null,
+                'notification_email' => $validated['notification_email'],
+                'opens_at' => $validated['opens_at'] ?? null,
+                'closes_at' => $validated['closes_at'] ?? null,
+                'business_days' => $validated['business_days'] ?? [],
+            ],
+        );
+
+        if (! empty($validated['phone_number'])) {
+            PhoneNumber::updateOrCreate(
+                ['tenant_id' => $tenant->id, 'provider' => 'twilio'],
+                [
+                    'label' => 'Ligne principale',
+                    'phone_number' => $validated['phone_number'],
+                    'is_active' => true,
+                ],
+            );
+        }
+
+        return back()->with('success', 'Configuration mise à jour.');
+    }
+}
