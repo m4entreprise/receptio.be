@@ -199,6 +199,7 @@ class BackofficeController extends Controller
             ],
             'numbers' => $context['numbers'],
             'webhooks' => $context['webhooks'],
+            'twilio' => $context['twilio'],
             'routingSteps' => [
                 [
                     'title' => '1. Appel entrant',
@@ -233,7 +234,7 @@ class BackofficeController extends Controller
             'integrations' => $context['integrations'],
             'deploymentChecklist' => [
                 ['label' => 'Numéro Twilio connecté', 'done' => count($context['numbers']) > 0],
-                ['label' => 'Webhook entrant accessible', 'done' => filled($context['webhooks']['incoming'])],
+                ['label' => 'Webhook entrant accessible', 'done' => $context['twilio']['last_call'] !== null],
                 ['label' => 'Notification email configurée', 'done' => $context['summary']['notification_ready']],
                 ['label' => 'Message d’accueil validé', 'done' => filled($context['settings']['welcome_message'])],
             ],
@@ -308,6 +309,9 @@ class BackofficeController extends Controller
         $calls = $tenant
             ? $tenant->calls()->with(['message', 'phoneNumber'])->latest()->take(25)->get()->map(fn (Call $call) => $this->mapCall($call))->values()->all()
             : [];
+
+        $lastTwilioCall = collect($calls)
+            ->first(fn (array $call) => filled($call['external_sid']));
 
         $messages = collect($calls)
             ->filter(fn (array $call) => $call['message'] !== null)
@@ -446,10 +450,14 @@ class BackofficeController extends Controller
             'onboarding' => $onboarding,
             'integrations' => $integrations,
             'serviceStatus' => $serviceStatus,
+            'twilio' => [
+                'last_call' => $lastTwilioCall,
+            ],
             'webhooks' => [
                 'incoming' => route('webhooks.twilio.voice.incoming', absolute: true),
                 'menu' => route('webhooks.twilio.voice.menu', absolute: true),
                 'recording' => route('webhooks.twilio.voice.recording', absolute: true),
+                'ping' => route('webhooks.twilio.voice.ping', absolute: true),
             ],
         ];
     }
@@ -458,6 +466,7 @@ class BackofficeController extends Controller
     {
         return [
             'id' => $call->id,
+            'external_sid' => $call->external_sid,
             'status' => $call->status,
             'status_label' => $this->statusLabel($call->status),
             'tone' => $this->statusTone($call->status),

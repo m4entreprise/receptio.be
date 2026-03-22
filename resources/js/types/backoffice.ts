@@ -32,6 +32,7 @@ export interface CallMessage {
 
 export interface CallItem {
     id: number;
+    external_sid: string | null;
     status: string;
     status_label: string;
     tone: 'default' | 'success' | 'warning' | 'info' | 'neutral';

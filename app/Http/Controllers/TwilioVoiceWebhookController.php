@@ -130,6 +130,14 @@ class TwilioVoiceWebhookController extends Controller
         ]));
     }
 
+    public function ping(Request $request): Response
+    {
+        return $this->xmlResponse($this->buildTwiml([
+            '<Say language="fr-BE">OK</Say>',
+            '<Hangup/>',
+        ]));
+    }
+
     private function buildTwiml(array $verbs): string
     {
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response>" . implode('', $verbs) . '</Response>';

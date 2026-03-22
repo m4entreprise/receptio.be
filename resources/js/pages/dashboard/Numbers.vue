@@ -4,7 +4,7 @@ import EmptyStateCard from '@/components/dashboard/EmptyStateCard.vue';
 import ToneBadge from '@/components/dashboard/ToneBadge.vue';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import AppLayout from '@/layouts/AppLayout.vue';
-import type { ServiceStatus, TenantSummary, WorkspaceSummary } from '@/types/backoffice';
+import type { CallItem, ServiceStatus, TenantSummary, WorkspaceSummary } from '@/types/backoffice';
 import { Head } from '@inertiajs/vue3';
 
 const breadcrumbs = [
@@ -32,6 +32,10 @@ interface Props {
         incoming: string;
         menu: string;
         recording: string;
+        ping: string;
+    };
+    twilio: {
+        last_call: CallItem | null;
     };
     routingSteps: Array<{
         title: string;
@@ -40,6 +44,18 @@ interface Props {
 }
 
 defineProps<Props>();
+
+const formatDate = (value: string | null) => {
+    if (!value) return 'n/a';
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+
+    return date.toLocaleString();
+};
 </script>
 
 <template>
@@ -124,6 +140,10 @@ defineProps<Props>();
                             <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Recording</p>
                             <p class="mt-2 break-all font-mono text-sm">{{ webhooks.recording }}</p>
                         </div>
+                        <div class="rounded-[1.5rem] border border-border/60 p-4">
+                            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Ping</p>
+                            <p class="mt-2 break-all font-mono text-sm">{{ webhooks.ping }}</p>
+                        </div>
                     </CardContent>
                 </Card>
 
@@ -140,6 +160,36 @@ defineProps<Props>();
                     </CardContent>
                 </Card>
             </div>
+
+            <Card class="border-border/70 bg-background/95 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.32)]">
+                <CardHeader>
+                    <CardDescription>Connexion</CardDescription>
+                    <CardTitle>Dernier appel Twilio reçu</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div v-if="twilio.last_call" class="grid gap-4 md:grid-cols-4">
+                        <div class="rounded-[1.5rem] border border-border/60 bg-muted/20 p-4">
+                            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Reçu</p>
+                            <p class="mt-2 text-sm font-semibold">{{ formatDate(twilio.last_call.started_at) }}</p>
+                        </div>
+                        <div class="rounded-[1.5rem] border border-border/60 bg-muted/20 p-4">
+                            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">From</p>
+                            <p class="mt-2 break-all font-mono text-sm">{{ twilio.last_call.from_number }}</p>
+                        </div>
+                        <div class="rounded-[1.5rem] border border-border/60 bg-muted/20 p-4">
+                            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">To</p>
+                            <p class="mt-2 break-all font-mono text-sm">{{ twilio.last_call.to_number }}</p>
+                        </div>
+                        <div class="rounded-[1.5rem] border border-border/60 bg-muted/20 p-4">
+                            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">CallSid</p>
+                            <p class="mt-2 break-all font-mono text-sm">{{ twilio.last_call.external_sid }}</p>
+                        </div>
+                    </div>
+                    <div v-else class="rounded-[1.5rem] border border-border/60 bg-muted/10 p-5">
+                        <p class="text-sm text-muted-foreground">Aucun appel Twilio n’a encore touché le webhook entrant.</p>
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     </AppLayout>
 </template>

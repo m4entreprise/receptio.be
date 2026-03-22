@@ -24,10 +24,12 @@ Route::middleware(['auth', 'verified'])->prefix('dashboard')->group(function () 
 
 Route::prefix('webhooks/twilio/voice')
     ->withoutMiddleware([ValidateCsrfToken::class])
+    ->middleware(['twilio.signature'])
     ->group(function () {
         Route::post('incoming', [TwilioVoiceWebhookController::class, 'incoming'])->name('webhooks.twilio.voice.incoming');
         Route::post('menu', [TwilioVoiceWebhookController::class, 'menu'])->name('webhooks.twilio.voice.menu');
         Route::post('recording', [TwilioVoiceWebhookController::class, 'recording'])->name('webhooks.twilio.voice.recording');
+        Route::post('ping', [TwilioVoiceWebhookController::class, 'ping'])->name('webhooks.twilio.voice.ping');
     });
 
 require __DIR__.'/settings.php';
