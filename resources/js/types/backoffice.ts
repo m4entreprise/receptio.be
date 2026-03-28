@@ -1,3 +1,5 @@
+export type Tone = 'default' | 'success' | 'warning' | 'info' | 'neutral';
+
 export interface TenantSummary {
     id: number;
     name: string;
@@ -19,8 +21,30 @@ export interface WorkspaceSummary {
 
 export interface ServiceStatus {
     label: string;
-    tone: 'default' | 'success' | 'warning' | 'info' | 'neutral';
+    tone: Tone;
     description: string;
+}
+
+export interface PaginationData {
+    current_page: number;
+    last_page: number;
+    from: number | null;
+    to: number | null;
+    total: number;
+    previous_page_url: string | null;
+    next_page_url: string | null;
+}
+
+export interface SelectOption {
+    label: string;
+    value: string;
+}
+
+export interface AppliedFilters {
+    status: string;
+    search: string;
+    date_from: string;
+    date_to: string;
 }
 
 export interface CallMessage {
@@ -28,6 +52,13 @@ export interface CallMessage {
     caller_number: string | null;
     message_text: string | null;
     recording_url: string | null;
+    recording_duration: number | null;
+    workflow_status: string | null;
+    workflow_status_label: string | null;
+    workflow_status_tone: Tone | null;
+    assigned_to_name: string | null;
+    handled_by_name: string | null;
+    handled_at: string | null;
 }
 
 export interface CallStatusEvent {
@@ -46,7 +77,7 @@ export interface CallItem {
     external_sid: string | null;
     status: string;
     status_label: string;
-    tone: 'default' | 'success' | 'warning' | 'info' | 'neutral';
+    tone: Tone;
     direction: string | null;
     from_number: string | null;
     to_number: string | null;
@@ -61,10 +92,37 @@ export interface CallItem {
     message: CallMessage | null;
 }
 
+export interface CallDetailItem extends CallItem {
+    tenant_name: string;
+}
+
+export interface InboxMessageItem {
+    id: number;
+    call_id: number;
+    call_external_sid: string | null;
+    caller: string;
+    phone: string;
+    excerpt: string;
+    message_text: string | null;
+    recording_url: string | null;
+    recording_duration: number | null;
+    status: string;
+    status_label: string;
+    status_tone: Tone;
+    call_status: string | null;
+    call_status_label: string | null;
+    priority: string;
+    created_at: string | null;
+    summary: string | null;
+    assigned_to_name: string | null;
+    handled_by_name: string | null;
+    handled_at: string | null;
+}
+
 export interface IntegrationItem {
     name: string;
     status: string;
-    tone: 'default' | 'success' | 'warning' | 'info' | 'neutral';
+    tone: Tone;
     description: string;
 }
 

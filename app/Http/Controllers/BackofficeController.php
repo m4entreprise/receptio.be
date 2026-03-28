@@ -3,15 +3,22 @@
 namespace App\Http\Controllers;
 
 use App\Models\Call;
+use App\Models\CallMessage;
 use App\Models\Tenant;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
-use Illuminate\Support\Collection;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class BackofficeController extends Controller
 {
+    private const OPEN_MESSAGE_STATUSES = [
+        CallMessage::STATUS_NEW,
+        CallMessage::STATUS_IN_PROGRESS,
+    ];
+
     public function overview(Request $request): Response
     {
         $context = $this->buildContext($request);
@@ -71,7 +78,18 @@ class BackofficeController extends Controller
     public function calls(Request $request): Response
     {
         $context = $this->buildContext($request);
-        $calls = $context['calls'];
+        $tenant = $context['tenantModel'];
+
+        $callsQuery = $tenant
+            ? $this->applyCallFilters($tenant->calls()->with(['message.assignedTo', 'message.handledBy', 'phoneNumber']), $request)
+            : Call::query()->whereRaw('0 = 1');
+
+        $callsPaginator = $callsQuery->paginate(15)->withQueryString();
+        $calls = $callsPaginator->getCollection()->map(fn (Call $call) => $this->mapCall($call))->values()->all();
+
+        $callStatsQuery = $tenant
+            ? $this->applyCallFilters($tenant->calls(), $request)
+            : Call::query()->whereRaw('0 = 1');
 
         return Inertia::render('dashboard/Calls', [
             ...$this->sharedPageData($context),
@@ -81,27 +99,39 @@ class BackofficeController extends Controller
             ],
             'calls' => $calls,
             'callStats' => [
-                [
-                    'label' => 'Appels totaux',
-                    'value' => $context['summary']['total_calls'],
-                    'tone' => 'default',
-                ],
-                [
-                    'label' => 'Transferts actifs',
-                    'value' => $context['summary']['transfer_enabled'] ? 'Activé' : 'Inactif',
-                    'tone' => $context['summary']['transfer_enabled'] ? 'success' : 'warning',
-                ],
-                [
-                    'label' => 'Messages laissés',
-                    'value' => $context['summary']['voicemail_calls'],
-                    'tone' => 'info',
-                ],
+                ['label' => 'Appels visibles', 'value' => (clone $callStatsQuery)->count(), 'tone' => 'default'],
+                ['label' => 'Messages vocaux', 'value' => (clone $callStatsQuery)->whereHas('message')->count(), 'tone' => 'warning'],
+                ['label' => 'Transférés', 'value' => (clone $callStatsQuery)->where('status', 'transferred')->count(), 'tone' => 'success'],
             ],
-            'filters' => [
-                ['label' => 'Tous les statuts', 'active' => true],
-                ['label' => 'Messages reçus', 'active' => false],
-                ['label' => 'Après horaires', 'active' => false],
-                ['label' => 'Transférés', 'active' => false],
+            'filterOptions' => [
+                'statuses' => $this->callStatusOptions(),
+            ],
+            'appliedFilters' => $this->filterState($request),
+            'pagination' => $this->paginationData($callsPaginator),
+        ]);
+    }
+
+    public function showCall(Request $request, int $call): Response
+    {
+        $context = $this->buildContext($request);
+        $tenant = $context['tenantModel'];
+
+        abort_unless($tenant, 404);
+
+        $callRecord = $tenant->calls()
+            ->with(['message.assignedTo', 'message.handledBy', 'phoneNumber'])
+            ->whereKey($call)
+            ->firstOrFail();
+
+        return Inertia::render('dashboard/CallDetail', [
+            ...$this->sharedPageData($context),
+            'pageMeta' => [
+                'title' => 'Fiche appel',
+                'description' => 'Retrouve le cycle de vie complet de l’appel, ses événements Twilio et le message vocal associé.',
+            ],
+            'call' => [
+                ...$this->mapCall($callRecord),
+                'tenant_name' => $tenant->name,
             ],
         ]);
     }
@@ -109,6 +139,18 @@ class BackofficeController extends Controller
     public function messages(Request $request): Response
     {
         $context = $this->buildContext($request);
+        $tenant = $context['tenantModel'];
+
+        $messagesQuery = $tenant
+            ? $this->applyMessageFilters($tenant->callMessages()->with(['call.phoneNumber', 'assignedTo', 'handledBy']), $request)
+            : CallMessage::query()->whereRaw('0 = 1');
+
+        $messagesPaginator = $messagesQuery->paginate(12)->withQueryString();
+        $messages = $messagesPaginator->getCollection()->map(fn (CallMessage $message) => $this->mapMessage($message))->values()->all();
+
+        $inboxStatsQuery = $tenant
+            ? $this->applyMessageFilters($tenant->callMessages(), $request)
+            : CallMessage::query()->whereRaw('0 = 1');
 
         return Inertia::render('dashboard/Messages', [
             ...$this->sharedPageData($context),
@@ -116,29 +158,22 @@ class BackofficeController extends Controller
                 'title' => 'Messages',
                 'description' => 'Gère la boîte de réception des demandes de rappel, messages vocaux et suivis prioritaires.',
             ],
-            'messages' => $context['messages'],
+            'messages' => $messages,
             'inboxStats' => [
-                [
-                    'label' => 'À traiter',
-                    'value' => $context['summary']['messages_waiting'],
-                    'tone' => 'warning',
-                ],
-                [
-                    'label' => 'Messages enregistrés',
-                    'value' => count($context['messages']),
-                    'tone' => 'default',
-                ],
-                [
-                    'label' => 'Notifications email',
-                    'value' => $context['summary']['notification_ready'] ? 'Actives' : 'À renseigner',
-                    'tone' => $context['summary']['notification_ready'] ? 'success' : 'warning',
-                ],
+                ['label' => 'À traiter', 'value' => (clone $inboxStatsQuery)->whereIn('status', self::OPEN_MESSAGE_STATUSES)->count(), 'tone' => 'warning'],
+                ['label' => 'Messages visibles', 'value' => (clone $inboxStatsQuery)->count(), 'tone' => 'default'],
+                ['label' => 'Rappelés', 'value' => (clone $inboxStatsQuery)->where('status', CallMessage::STATUS_CALLED_BACK)->count(), 'tone' => 'success'],
             ],
+            'filterOptions' => [
+                'statuses' => $this->messageStatusOptions(),
+            ],
+            'appliedFilters' => $this->filterState($request),
             'serviceRules' => [
                 'Tous les messages sont historisés et attachés à un appel.',
                 'Le rappel humain reste l’action prioritaire quand une demande attend.',
                 'Le traitement suit une lecture claire, priorisée et centralisée.',
             ],
+            'pagination' => $this->paginationData($messagesPaginator),
         ]);
     }
 
@@ -154,35 +189,14 @@ class BackofficeController extends Controller
             ],
             'settings' => $context['settings'],
             'readiness' => [
-                [
-                    'label' => 'Score de configuration',
-                    'value' => $context['summary']['configuration_score'].'%',
-                    'description' => 'Indicateur de complétude sur les paramètres essentiels du standard.',
-                ],
-                [
-                    'label' => 'Horaires',
-                    'value' => $context['summary']['open_hours'],
-                    'description' => 'Plage utilisée pour distinguer ouverture et hors horaires.',
-                ],
-                [
-                    'label' => 'Transfert humain',
-                    'value' => $context['summary']['transfer_enabled'] ? 'Disponible' : 'Non renseigné',
-                    'description' => 'Le numéro de transfert permet l’escalade immédiate.',
-                ],
+                ['label' => 'Score de configuration', 'value' => $context['summary']['configuration_score'].'%', 'description' => 'Indicateur de complétude sur les paramètres essentiels du standard.'],
+                ['label' => 'Horaires', 'value' => $context['summary']['open_hours'], 'description' => 'Plage utilisée pour distinguer ouverture et hors horaires.'],
+                ['label' => 'Transfert humain', 'value' => $context['summary']['transfer_enabled'] ? 'Disponible' : 'Non renseigné', 'description' => 'Le numéro de transfert permet l’escalade immédiate.'],
             ],
             'capabilities' => [
-                [
-                    'title' => 'Ton & posture',
-                    'items' => ['Accueil sobre et professionnel', 'Réponses courtes et orientées action', 'Escalade humaine toujours visible'],
-                ],
-                [
-                    'title' => 'Cadre métier',
-                    'items' => ['Jours ouvrés et horaires d’ouverture', 'FAQ concise pour les demandes simples', 'Notification email sur message laissé'],
-                ],
-                [
-                    'title' => 'Qualité de réponse',
-                    'items' => ['Formulations cohérentes et rassurantes', 'Réponses cadrées sur les besoins fréquents', 'Continuité de service sur toutes les plages horaires'],
-                ],
+                ['title' => 'Ton & posture', 'items' => ['Accueil sobre et professionnel', 'Réponses courtes et orientées action', 'Escalade humaine toujours visible']],
+                ['title' => 'Cadre métier', 'items' => ['Jours ouvrés et horaires d’ouverture', 'FAQ concise pour les demandes simples', 'Notification email sur message laissé']],
+                ['title' => 'Qualité de réponse', 'items' => ['Formulations cohérentes et rassurantes', 'Réponses cadrées sur les besoins fréquents', 'Continuité de service sur toutes les plages horaires']],
             ],
         ]);
     }
@@ -201,22 +215,10 @@ class BackofficeController extends Controller
             'webhooks' => $context['webhooks'],
             'twilio' => $context['twilio'],
             'routingSteps' => [
-                [
-                    'title' => '1. Appel entrant',
-                    'description' => 'Le numéro entrant est reconnu et rattaché au bon espace de travail.',
-                ],
-                [
-                    'title' => '2. Qualification',
-                    'description' => 'Les horaires, la disponibilité et les règles de traitement sont appliqués automatiquement.',
-                ],
-                [
-                    'title' => '3. Action',
-                    'description' => 'L’appel est orienté vers la meilleure action : transfert, accueil ou prise de message.',
-                ],
-                [
-                    'title' => '4. Suivi',
-                    'description' => 'Les interactions sont historisées et distribuées aux bons canaux de suivi.',
-                ],
+                ['title' => '1. Appel entrant', 'description' => 'Le numéro entrant est reconnu et rattaché au bon espace de travail.'],
+                ['title' => '2. Qualification', 'description' => 'Les horaires, la disponibilité et les règles de traitement sont appliqués automatiquement.'],
+                ['title' => '3. Action', 'description' => 'L’appel est orienté vers la meilleure action : transfert, accueil ou prise de message.'],
+                ['title' => '4. Suivi', 'description' => 'Les interactions sont historisées et distribuées aux bons canaux de suivi.'],
             ],
         ]);
     }
@@ -302,33 +304,16 @@ class BackofficeController extends Controller
 
     private function buildContext(Request $request): array
     {
-        $tenant = $request->user()->tenant()->with(['agentConfig', 'phoneNumbers', 'calls.message', 'calls.phoneNumber'])->first()
-            ?? Tenant::with(['agentConfig', 'phoneNumbers', 'calls.message', 'calls.phoneNumber'])->first();
-
+        $tenant = $this->resolveDashboardTenant($request);
         $agentConfig = $tenant?->agentConfig;
+
         $calls = $tenant
-            ? $tenant->calls()->with(['message', 'phoneNumber'])->latest()->take(25)->get()->map(fn (Call $call) => $this->mapCall($call))->values()->all()
+            ? $tenant->calls()->with(['message.assignedTo', 'message.handledBy', 'phoneNumber'])->orderByDesc('started_at')->orderByDesc('id')->take(25)->get()->map(fn (Call $call) => $this->mapCall($call))->values()->all()
             : [];
 
-        $lastTwilioCall = collect($calls)
-            ->first(fn (array $call) => filled($call['external_sid']));
-
-        $messages = collect($calls)
-            ->filter(fn (array $call) => $call['message'] !== null)
-            ->map(fn (array $call) => [
-                'id' => $call['id'],
-                'caller' => $call['message']['caller_name'] ?: $call['from_number'] ?: 'Contact inconnu',
-                'phone' => $call['message']['caller_number'] ?: $call['from_number'] ?: 'n/a',
-                'excerpt' => Str::limit($call['message']['message_text'] ?? 'Message vocal enregistré.', 120),
-                'recording_url' => $call['message']['recording_url'],
-                'status' => $call['status'],
-                'status_label' => $call['status_label'],
-                'priority' => Str::contains(Str::lower(($call['summary'] ?? '').' '.($call['message']['message_text'] ?? '')), ['urgent', 'rapidement', 'aujourd']) ? 'Élevée' : 'Normale',
-                'created_at' => $call['started_at'],
-                'summary' => $call['summary'],
-            ])
-            ->values()
-            ->all();
+        $messages = $tenant
+            ? $tenant->callMessages()->with(['call.phoneNumber', 'assignedTo', 'handledBy'])->latest()->take(10)->get()->map(fn (CallMessage $message) => $this->mapMessage($message))->values()->all()
+            : [];
 
         $numbers = $tenant
             ? $tenant->phoneNumbers->map(fn ($phoneNumber) => [
@@ -364,8 +349,11 @@ class BackofficeController extends Controller
         ];
 
         $configurationScore = (int) round(collect($checks)->filter()->count() / count($checks) * 100);
-        $voicemailCalls = collect($calls)->filter(fn (array $call) => $call['status'] === 'voicemail_received')->count();
-        $afterHoursCalls = collect($calls)->filter(fn (array $call) => $call['status'] === 'after_hours')->count();
+        $totalCalls = $tenant?->calls()->count() ?? 0;
+        $voicemailCalls = $tenant?->calls()->where('status', 'voicemail_received')->count() ?? 0;
+        $afterHoursCalls = $tenant?->calls()->where('status', 'after_hours')->count() ?? 0;
+        $messagesWaiting = $tenant?->callMessages()->whereIn('status', self::OPEN_MESSAGE_STATUSES)->count() ?? 0;
+        $lastTwilioCall = collect($calls)->first(fn (array $call) => filled($call['external_sid']));
 
         $tenantData = $tenant ? [
             'id' => $tenant->id,
@@ -376,10 +364,10 @@ class BackofficeController extends Controller
         ] : null;
 
         $summary = [
-            'total_calls' => count($calls),
+            'total_calls' => $totalCalls,
             'voicemail_calls' => $voicemailCalls,
             'after_hours_calls' => $afterHoursCalls,
-            'messages_waiting' => count($messages),
+            'messages_waiting' => $messagesWaiting,
             'open_hours' => $settings['opens_at'] && $settings['closes_at'] ? $settings['opens_at'].' - '.$settings['closes_at'] : 'Non défini',
             'transfer_enabled' => filled($settings['transfer_phone_number']),
             'notification_ready' => filled($settings['notification_email']),
@@ -387,16 +375,8 @@ class BackofficeController extends Controller
         ];
 
         $serviceStatus = $configurationScore >= 80 && count($numbers) > 0
-            ? [
-                'label' => 'Opérationnel',
-                'tone' => 'success',
-                'description' => 'Le workspace présente un niveau de configuration stable et cohérent pour l’exploitation.',
-            ]
-            : [
-                'label' => 'Sous contrôle',
-                'tone' => 'warning',
-                'description' => 'Quelques paramètres restent à affiner pour aligner l’ensemble des réglages opérationnels.',
-            ];
+            ? ['label' => 'Opérationnel', 'tone' => 'success', 'description' => 'Le workspace présente un niveau de configuration stable et cohérent pour l’exploitation.']
+            : ['label' => 'Sous contrôle', 'tone' => 'warning', 'description' => 'Quelques paramètres restent à affiner pour aligner l’ensemble des réglages opérationnels.'];
 
         $alerts = collect([
             ! filled($settings['phone_number']) ? ['title' => 'Aucun numéro principal', 'description' => 'Ajoute ou connecte un numéro Twilio pour recevoir des appels.', 'tone' => 'warning'] : null,
@@ -413,34 +393,15 @@ class BackofficeController extends Controller
         ];
 
         $integrations = [
-            [
-                'name' => 'Twilio Voice',
-                'status' => count($numbers) > 0 ? 'Connecté' : 'En attente',
-                'tone' => count($numbers) > 0 ? 'success' : 'warning',
-                'description' => 'Gestion des appels entrants, du routage vocal et des événements téléphoniques.',
-            ],
-            [
-                'name' => 'Notifications email',
-                'status' => filled($settings['notification_email']) ? 'Actif' : 'En attente',
-                'tone' => filled($settings['notification_email']) ? 'success' : 'warning',
-                'description' => 'Distribution des demandes de rappel et des messages vers l’équipe concernée.',
-            ],
-            [
-                'name' => 'Journal d’activité',
-                'status' => 'Disponible',
-                'tone' => 'info',
-                'description' => 'Historisation centralisée des appels, messages et événements métier.',
-            ],
-            [
-                'name' => 'Escalade téléphonique',
-                'status' => filled($settings['transfer_phone_number']) ? 'Active' : 'En attente',
-                'tone' => 'neutral',
-                'description' => 'Bascule des appels vers une ligne de reprise définie par l’organisation.',
-            ],
+            ['name' => 'Twilio Voice', 'status' => count($numbers) > 0 ? 'Connecté' : 'En attente', 'tone' => count($numbers) > 0 ? 'success' : 'warning', 'description' => 'Gestion des appels entrants, du routage vocal et des événements téléphoniques.'],
+            ['name' => 'Notifications email', 'status' => filled($settings['notification_email']) ? 'Actif' : 'En attente', 'tone' => filled($settings['notification_email']) ? 'success' : 'warning', 'description' => 'Distribution des demandes de rappel et des messages vers l’équipe concernée.'],
+            ['name' => 'Journal d’activité', 'status' => 'Disponible', 'tone' => 'info', 'description' => 'Historisation centralisée des appels, messages et événements métier.'],
+            ['name' => 'Escalade téléphonique', 'status' => filled($settings['transfer_phone_number']) ? 'Active' : 'En attente', 'tone' => 'neutral', 'description' => 'Bascule des appels vers une ligne de reprise définie par l’organisation.'],
         ];
 
         return [
             'tenant' => $tenantData,
+            'tenantModel' => $tenant,
             'summary' => $summary,
             'settings' => $settings,
             'calls' => $calls,
@@ -450,9 +411,7 @@ class BackofficeController extends Controller
             'onboarding' => $onboarding,
             'integrations' => $integrations,
             'serviceStatus' => $serviceStatus,
-            'twilio' => [
-                'last_call' => $lastTwilioCall,
-            ],
+            'twilio' => ['last_call' => $lastTwilioCall],
             'webhooks' => [
                 'incoming' => route('webhooks.twilio.voice.incoming', absolute: true),
                 'menu' => route('webhooks.twilio.voice.menu', absolute: true),
@@ -463,14 +422,113 @@ class BackofficeController extends Controller
         ];
     }
 
+    private function resolveDashboardTenant(Request $request): ?Tenant
+    {
+        return $request->user()->tenant()->with(['agentConfig', 'phoneNumbers'])->first()
+            ?? Tenant::with(['agentConfig', 'phoneNumbers'])->first();
+    }
+
+    private function applyCallFilters(Builder $query, Request $request): Builder
+    {
+        $status = $request->string('status')->toString();
+        $search = trim($request->string('search')->toString());
+        $dateFrom = $request->string('date_from')->toString();
+        $dateTo = $request->string('date_to')->toString();
+
+        if (filled($status)) {
+            $query->where('status', $status);
+        }
+
+        if (filled($search)) {
+            $query->where(function (Builder $callQuery) use ($search) {
+                $callQuery
+                    ->where('from_number', 'like', "%{$search}%")
+                    ->orWhere('to_number', 'like', "%{$search}%")
+                    ->orWhere('external_sid', 'like', "%{$search}%")
+                    ->orWhere('summary', 'like', "%{$search}%");
+            });
+        }
+
+        if (filled($dateFrom)) {
+            $query->whereDate('started_at', '>=', $dateFrom);
+        }
+
+        if (filled($dateTo)) {
+            $query->whereDate('started_at', '<=', $dateTo);
+        }
+
+        return $query->orderByDesc('started_at')->orderByDesc('id');
+    }
+
+    private function applyMessageFilters(Builder $query, Request $request): Builder
+    {
+        $status = $request->string('status')->toString();
+        $search = trim($request->string('search')->toString());
+        $dateFrom = $request->string('date_from')->toString();
+        $dateTo = $request->string('date_to')->toString();
+
+        if (filled($status)) {
+            $query->where('status', $status);
+        }
+
+        if (filled($search)) {
+            $query->where(function (Builder $messageQuery) use ($search) {
+                $messageQuery
+                    ->where('caller_name', 'like', "%{$search}%")
+                    ->orWhere('caller_number', 'like', "%{$search}%")
+                    ->orWhere('message_text', 'like', "%{$search}%")
+                    ->orWhereHas('call', function (Builder $callQuery) use ($search) {
+                        $callQuery
+                            ->where('from_number', 'like', "%{$search}%")
+                            ->orWhere('external_sid', 'like', "%{$search}%")
+                            ->orWhere('summary', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        if (filled($dateFrom)) {
+            $query->whereDate('created_at', '>=', $dateFrom);
+        }
+
+        if (filled($dateTo)) {
+            $query->whereDate('created_at', '<=', $dateTo);
+        }
+
+        return $query->latest();
+    }
+
+    private function filterState(Request $request): array
+    {
+        return [
+            'status' => $request->string('status')->toString(),
+            'search' => $request->string('search')->toString(),
+            'date_from' => $request->string('date_from')->toString(),
+            'date_to' => $request->string('date_to')->toString(),
+        ];
+    }
+
+    private function paginationData(LengthAwarePaginator $paginator): array
+    {
+        return [
+            'current_page' => $paginator->currentPage(),
+            'last_page' => $paginator->lastPage(),
+            'from' => $paginator->firstItem(),
+            'to' => $paginator->lastItem(),
+            'total' => $paginator->total(),
+            'previous_page_url' => $paginator->previousPageUrl(),
+            'next_page_url' => $paginator->nextPageUrl(),
+        ];
+    }
+
     private function mapCall(Call $call): array
     {
         $durationSeconds = data_get($call->metadata, 'call_duration_seconds')
             ?? data_get($call->metadata, 'dial_call_duration_seconds')
             ?? ($call->started_at && $call->ended_at ? $call->started_at->diffInSeconds($call->ended_at) : null);
+
         $recentStatusEvents = collect(data_get($call->metadata, 'status_events', []))
             ->filter(fn ($event) => is_array($event))
-            ->take(-3)
+            ->take(-5)
             ->values()
             ->map(fn (array $event) => [
                 'received_at' => data_get($event, 'received_at'),
@@ -506,7 +564,69 @@ class BackofficeController extends Controller
                 'caller_number' => $call->message->caller_number,
                 'message_text' => $call->message->message_text,
                 'recording_url' => $call->message->recording_url,
+                'recording_duration' => $call->message->recording_duration,
+                'workflow_status' => $call->message->status,
+                'workflow_status_label' => $this->messageStatusLabel($call->message->status),
+                'workflow_status_tone' => $this->messageStatusTone($call->message->status),
+                'assigned_to_name' => $call->message->assignedTo?->name,
+                'handled_by_name' => $call->message->handledBy?->name,
+                'handled_at' => $call->message->handled_at?->toIso8601String(),
             ] : null,
+        ];
+    }
+
+    private function mapMessage(CallMessage $message): array
+    {
+        $call = $message->call;
+        $prioritySource = Str::lower(($call?->summary ?? '').' '.($message->message_text ?? ''));
+        $priority = Str::contains($prioritySource, ['urgent', 'rapidement', 'aujourd', 'immediat', 'immédiat']) ? 'Élevée' : 'Normale';
+
+        return [
+            'id' => $message->id,
+            'call_id' => $message->call_id,
+            'call_external_sid' => $call?->external_sid,
+            'caller' => $message->caller_name ?: $message->caller_number ?: $call?->from_number ?: 'Contact inconnu',
+            'phone' => $message->caller_number ?: $call?->from_number ?: 'n/a',
+            'excerpt' => Str::limit($message->message_text ?? 'Message vocal enregistré.', 160),
+            'message_text' => $message->message_text,
+            'recording_url' => $message->recording_url,
+            'recording_duration' => $message->recording_duration,
+            'status' => $message->status,
+            'status_label' => $this->messageStatusLabel($message->status),
+            'status_tone' => $this->messageStatusTone($message->status),
+            'call_status' => $call?->status,
+            'call_status_label' => $call?->status ? $this->statusLabel($call->status) : null,
+            'priority' => $priority,
+            'created_at' => $message->created_at?->toIso8601String(),
+            'summary' => $call?->summary,
+            'assigned_to_name' => $message->assignedTo?->name,
+            'handled_by_name' => $message->handledBy?->name,
+            'handled_at' => $message->handled_at?->toIso8601String(),
+        ];
+    }
+
+    private function callStatusOptions(): array
+    {
+        return [
+            ['label' => 'Tous les statuts', 'value' => ''],
+            ['label' => 'Reçu', 'value' => 'received'],
+            ['label' => 'En cours', 'value' => 'in_progress'],
+            ['label' => 'Transféré', 'value' => 'transferred'],
+            ['label' => 'Message reçu', 'value' => 'voicemail_received'],
+            ['label' => 'Hors horaires', 'value' => 'after_hours'],
+            ['label' => 'Terminé', 'value' => 'completed'],
+            ['label' => 'Échec', 'value' => 'failed'],
+        ];
+    }
+
+    private function messageStatusOptions(): array
+    {
+        return [
+            ['label' => 'Tous les statuts', 'value' => ''],
+            ['label' => 'Nouveau', 'value' => CallMessage::STATUS_NEW],
+            ['label' => 'En cours', 'value' => CallMessage::STATUS_IN_PROGRESS],
+            ['label' => 'Rappelé', 'value' => CallMessage::STATUS_CALLED_BACK],
+            ['label' => 'Clôturé', 'value' => CallMessage::STATUS_CLOSED],
         ];
     }
 
@@ -534,10 +654,31 @@ class BackofficeController extends Controller
         return match ($status) {
             'voicemail_received' => 'warning',
             'after_hours' => 'info',
-            'completed' => 'success',
-            'transferred' => 'success',
+            'completed', 'transferred' => 'success',
             'busy', 'failed', 'no_answer' => 'warning',
             'transferring', 'in_progress' => 'info',
+            default => 'default',
+        };
+    }
+
+    private function messageStatusLabel(string $status): string
+    {
+        return match ($status) {
+            CallMessage::STATUS_NEW => 'Nouveau',
+            CallMessage::STATUS_IN_PROGRESS => 'En cours',
+            CallMessage::STATUS_CALLED_BACK => 'Rappelé',
+            CallMessage::STATUS_CLOSED => 'Clôturé',
+            default => Str::headline(str_replace('_', ' ', $status)),
+        };
+    }
+
+    private function messageStatusTone(string $status): string
+    {
+        return match ($status) {
+            CallMessage::STATUS_NEW => 'warning',
+            CallMessage::STATUS_IN_PROGRESS => 'info',
+            CallMessage::STATUS_CALLED_BACK => 'success',
+            CallMessage::STATUS_CLOSED => 'neutral',
             default => 'default',
         };
     }
