@@ -1,558 +1,122 @@
 # Plan de solidification Receptio
 
-## Objectif
+## Statut
 
-Passer du MVP Twilio valide a une V1 exploitable, fiable et vendable.
-
-Le MVP a deja valide les points les plus risques :
-
-- reception d'appels Twilio sur un vrai numero
-- execution des webhooks voix cote Laravel
-- routage initial vers le bon tenant via le numero appele
-- enregistrement des appels et messages dans le dashboard
-- protection des webhooks par signature Twilio
-
-La suite consiste a transformer ce socle en produit robuste.
+- **Termine**
+- **Objectif atteint** : disposer d'un socle V1 fiable, exploitable et extensible
+- **Hors perimetre** : conversation live, orchestration temps reel, remplacement credible d'un receptionniste humain
 
 ---
 
-## Decisions d'architecture deja acte
+## Objet du plan
+
+Ce plan avait un objectif volontairement limite :
+
+- fiabiliser la telephonie Twilio
+- rendre les appels tracables
+- rendre le backoffice exploitable
+- durcir le multi-tenant
+- traiter correctement les messages et rappels
+- enrichir l'apres-appel avec transcription, resume et qualification
+
+Le but n'etait pas encore de fournir une experience de reception conversationnelle fluide. Il s'agissait d'abord de construire le socle qui rend cette suite possible sans fragilite technique.
+
+---
+
+## Pourquoi ce plan s'arrete ici
+
+Le raisonnement produit et technique est le suivant :
+
+- le plan de solidification traite la **fiabilite operationnelle**
+- la promesse marquee de ReceptioAI demande ensuite une **fluidite conversationnelle**
+- ces deux sujets ne relevent pas du meme risque ni de la meme architecture
+
+Autrement dit :
+
+- ce plan a bien traite la telephonie, le fallback, la tracabilite, le backoffice et l'apres-appel
+- il n'avait pas vocation a resoudre la conversation temps reel
+- prolonger artificiellement ce plan brouillerait le sujet
+
+La suite produit doit donc partir d'un **nouveau plan** consacre a la reception IA conversationnelle.
+
+---
+
+## Livrables reellement obtenus
 
 ### Telephonie
 
-- modele retenu : **Option A**
-- un **compte Twilio global** pour toute l'application
-- les secrets Twilio restent en **variables d'environnement**
-- les numeros telephoniques sont stockes en **base de donnees**
-- le tenant est resolu a partir du numero `To`
-
-### Multi-tenant
-
-- un `tenant` possede sa configuration agent
-- un `tenant` possede un ou plusieurs `phone_numbers`
-- un appel entrant doit toujours etre rattache au tenant correspondant au numero appele
-
-### Produit
-
-- priorite a la **fiabilite operationnelle** avant d'ajouter plus d'IA
-- priorite au **backoffice utile** avant les integrations secondaires
-
----
-
-## Principes de travail
-
-- ne pas elargir le perimetre trop tot
-- solidifier d'abord le flux voix existant
-- rendre chaque etape testable de bout en bout
-- eviter les comportements implicites entre tenants
-- rendre le dashboard actionnable, pas seulement decoratif
-- documenter la recette et les criteres d'acceptation a chaque increment
-
----
-
-## Vue d'ensemble de la roadmap
-
-### Phase 1
-
-**Stabiliser la telephonie et les statuts d'appel**
-
-### Phase 2
-
-**Rendre le backoffice exploitable par une equipe**
-
-### Phase 3
-
-**Durcir reellement le multi-tenant**
-
-### Phase 4
-
-**Ajouter le traitement metier des messages et des rappels**
-
-### Phase 5
-
-**Ajouter transcription, resume et automatisation**
-
-### Phase 6
-
-**Preparer le go-live commercial**
-
----
-
-## Etat global actuel
-
-### Ce qui est fait cote application
-
-- phase 1 implementee cote Laravel et dashboard
-- phase 2 implementee cote Laravel et dashboard
-- phase 3 validee cote code et tests
-- phase 4 engagee cote code avec workflow de rappel, notifications email enrichies et journal d'activite
-- phase 5 engagee cote code avec pipeline asynchrone transcription -> resume -> qualification
-
-### Ce qui reste a valider ou terminer
-
-- configurer Twilio dans la console pour les status callbacks
-- appliquer les migrations recentes en environnement local/staging/prod
-- valider la recette Twilio reelle en environnement public
-- configurer un provider de transcription si l'on veut une vraie speech-to-text en production
-
-### Point de vigilance
-
-- la base de code avance plus vite que la recette terrain Twilio
-- les briques critiques sont maintenant couvertes par des tests executables, mais la validation production et le provider IA restent a finaliser
-
----
-
-# Phase 1 - Stabiliser la telephonie
-
-## But
-
-Faire en sorte que chaque appel ait un cycle de vie clair, tracable et fiable.
-
-## Etat de phase
-
-- **terminee cote application**
-- **partiellement terminee cote exploitation**
-
-## Etape 1.1 - Normaliser les statuts d'appel
-
-### Objectif
-
-Definir une liste courte, coherente et durable des statuts possibles.
-
-### Statuts recommandes
-
-- `received`
-- `in_progress`
-- `menu_offered`
-- `transferring`
-- `transferred`
-- `voicemail_prompted`
-- `voicemail_received`
-- `completed`
-- `failed`
-- `after_hours`
-- `no_answer`
-- `busy`
-
-### Etat d'avancement
-
-- **implemente cote application**
-- mapping backend/UI coherent en place
-- historique d'appel rendu plus lisible dans le dashboard
-
-## Etape 1.2 - Ajouter les status callbacks Twilio
-
-### Objectif
-
-Recevoir les evenements reels de Twilio pendant et apres l'appel.
-
-### Etat d'avancement
-
-- **implemente cote application Laravel**
-- route disponible : `/webhooks/twilio/voice/status`
-- mise a jour des `Call` en fonction de `CallStatus` et `DialCallStatus`
-- stockage de la duree reelle et des derniers evenements Twilio dans `metadata`
-- affichage du statut final et de la duree reelle dans le dashboard
-
-### Reste a faire cote Twilio
-
-- ouvrir la configuration du numero Twilio actif dans la console
-- conserver le webhook voix principal sur `POST /webhooks/twilio/voice/incoming`
-- configurer les **Status Callbacks** du numero pour pointer vers `POST /webhooks/twilio/voice/status`
-- demander les evenements utiles :
-  - `initiated`
-  - `ringing`
-  - `answered`
-  - `completed`
-- verifier que l'URL publique utilisee par Twilio est bien celle exposee en production
-- realiser un appel de test reel et verifier dans le dashboard :
-  - statut final
-  - duree
-  - `ended_at`
-  - cause d'echec si transfert non abouti
-
-## Etape 1.3 - Gerer les echecs de transfert
-
-### Objectif
-
-Eviter qu'un appel soit perdu si le numero humain ne repond pas.
-
-### Etat d'avancement
-
-- **implemente cote application Laravel**
-- fallback automatique vers messagerie sur `busy`, `no-answer`, `failed` et `canceled`
-- stockage de `transfer_failure_status`, `transfer_failed_at` et `fallback_target` dans `metadata`
-- restitution de la cause d'echec dans la liste des appels
-
-## Etape 1.4 - Rendre les webhooks plus observables
-
-### Objectif
-
-Pouvoir comprendre rapidement ce qui s'est passe sans lire la base a la main.
-
-### Etat d'avancement
-
-- **observabilite principale implementee**
-- journalisation structuree des etapes critiques sur `incoming`, `menu`, `status`, `recording` et `ping`
-- journalisation des rejets de signature Twilio et du token manquant dans le middleware
-- exposition des derniers evenements `status` Twilio dans le dashboard
-
----
-
-# Phase 2 - Rendre le backoffice exploitable
-
-## But
-
-Transformer le dashboard en outil operationnel.
-
-## Etat de phase
-
-- **terminee cote application**
-- **a valider completement cote migrations et tests**
-
-## Etape 2.1 - Fiche appel detaillee
-
-### Objectif
-
-Afficher les details utiles d'un appel individuel.
-
-### Etat d'avancement
-
-- **implemente cote application**
-- page detail appel disponible
-- donnees affichees : date, statut, numeros, duree, resume, tenant, `CallSid`, evenements Twilio, message associe, URL audio si presente
-
-## Etape 2.2 - Inbox messages exploitable
-
-### Objectif
-
-Permettre a une equipe de traiter les messages vocaux.
-
-### Etat d'avancement
-
-- **implemente cote application**
-- statuts metier ajoutes sur `call_messages`
-  - `new`
-  - `in_progress`
-  - `called_back`
-  - `closed`
-- actions de traitement disponibles dans le dashboard
-- affichage de qui a traite et quand
-
-## Etape 2.3 - Lecture des enregistrements
-
-### Objectif
-
-Faciliter la consultation sans quitter Receptio.
-
-### Etat d'avancement
-
-- **implemente cote application**
-- lecteur audio simple integre dans les pages appel et messages
-- affichage de la duree d'enregistrement
-- gestion des cas sans URL audio
-
-## Etape 2.4 - Filtres et recherche
-
-### Objectif
-
-Retrouver un appel ou un message rapidement.
-
-### Etat d'avancement
-
-- **implemente cote application**
-- filtres par statut
-- filtres par date
-- recherche par numero / texte / `CallSid`
-- pagination simple en place
-
-### Reste a valider
-
-- verification UX sur jeux de donnees reels
-- tests automatiques executables localement une fois l'environnement PHP corrige
-
----
-
-# Phase 3 - Durcir le multi-tenant
-
-## But
-
-Faire en sorte que le produit soit vraiment SaaS et sur.
-
-## Etat de phase
-
-- **en cours**
-- **socle implemente**
-- **validation incomplete**
-
-## Etape 3.1 - Supprimer les fallbacks globaux dangereux
-
-### Objectif
-
-Eviter qu'un appel tombe sur le mauvais tenant si le numero n'est pas trouve.
-
-### Etat d'avancement
-
-- **largement implemente cote code**
-- suppression des fallbacks du type `Tenant::first()` dans les webhooks Twilio critiques et dans le backoffice principal
-- ajout d'une resolution explicite du tenant et du numero via un resolver partage
-- si le numero n'est pas reconnu :
-  - reponse generique controlee
-  - log d'incident
-  - pas de rattachement arbitraire a un autre tenant
-
-### Reste a verifier
-
-- relecture complete du code pour traquer tout fallback implicite residuel
-- verification apres migration/deploiement sur environnement reel
-
-## Etape 3.2 - Verifier l'isolation UI et donnees
-
-### Etat d'avancement
-
-- **partiellement implemente**
-- les requetes du backoffice sont maintenant bornees au tenant de l'utilisateur
-- des tests de cloisonnement ont ete ajoutes pour :
-  - acces a la fiche appel
-  - mise a jour d'un message
-  - affichage de l'inbox
-  - absence de fallback pour un utilisateur sans tenant
-
-### Bloquant actuel
-
-- la suite de tests Laravel ne peut pas etre executee localement tant que le driver SQLite/PDO manque dans l'environnement PHP
-
-### Critere de sortie reel
-
-- un utilisateur du tenant A ne voit jamais les appels/messages du tenant B
-- la preuve doit exister en tests executables, pas seulement dans le code lu
-
-## Etape 3.3 - Gerer plusieurs numeros par tenant
-
-### Objectif
-
-Permettre a un tenant d'avoir plusieurs lignes.
-
-### Etat d'avancement
-
-- **partiellement implemente**
-- le schema et le routage supportent deja plusieurs `phone_numbers`
-- un concept de numero principal a ete ajoute avec `is_primary`
-- la configuration agent promeut explicitement un numero principal du tenant
-- le dashboard numerotation affiche le numero principal
-
-### Ce qui manque encore
-
-- vraie UI de gestion de plusieurs lignes
-- edition de labels / activation / desactivation
-- support futur de routage par service ou par libelle
-
-### Critere de sortie reel
-
-- plusieurs numeros peuvent etre relies au meme tenant sans comportement ambigu
-- le numero principal n'est jamais choisi implicitement par hasard
-
----
-
-# Phase 4 - Ajouter le traitement metier
-
-## But
-
-Faire de Receptio un outil de gestion de demandes, pas seulement un repondeur.
-
-## Etat de phase
-
-- **en cours**
-- **socle implemente et verifie**
-
-## Etape 4.1 - Workflow de rappel
-
-### Etat d'avancement
-
-- **implemente cote application**
-- action `rappeler plus tard` disponible dans l'inbox
-- champ `callback_due_at` ajoute sur `call_messages`
-- assignation d'un message a un utilisateur du tenant disponible
-- statuts et rappels journalises dans l'activite
-
-## Etape 4.2 - Notifications plus propres
-
-### Etat d'avancement
-
-- **implemente cote application**
-- l'email brut Twilio est remplace par un vrai template HTML
-- liens vers inbox et fiche appel inclus
-- tenant, appelant, heure et enregistrement inclus
-
-## Etape 4.3 - Journal d'activite
-
-### Etat d'avancement
-
-- **implemente cote application**
-- evenements traces :
-  - appel recu
-  - transfert tente
-  - transfert echoue
-  - message recu
-  - email envoye
-  - assignation
-  - rappel planifie
-  - changement de statut
-- chronologie visible dans la vue d'ensemble et sur la fiche appel
-
----
-
-# Phase 5 - Intelligence et automatisation
-
-## But
-
-Ajouter de la valeur sans fragiliser le socle.
-
-## Etat de phase
-
-- **en cours**
-- **socle implemente et verifie**
-
-## Etape 5.1 - Transcription des messages vocaux
-
-### Etat d'avancement
-
-- **implemente cote application**
-- recuperation de l'enregistrement et job asynchrone de traitement en place
-- stockage de la transcription dans `calls.transcript` et `call_messages.message_text`
-- statuts de transcription traces sur `call_messages`
-- fallback heuristique disponible si aucun provider externe n'est configure
-
-## Etape 5.2 - Resume automatique
-
-### Etat d'avancement
-
-- **implemente cote application**
-- generation d'un resume court exploitable
-- identification d'une intention metier
-- detection d'un niveau d'urgence `low` / `medium` / `high`
-- restitution visible dans l'inbox et la fiche appel
-
-## Etape 5.3 - FAQ et reponses assistees
-
-### Etat d'avancement
-
-- **amorcee**
-- le pipeline d'analyse produit deja les briques necessaires pour assister les reponses
-- reste a brancher une vraie logique de suggestions de reponse a partir de `faq_content`
-- reste a definir le niveau d'automatisation acceptable avant envoi
-
----
-
-# Phase 6 - Preparer le go-live commercial
-
-## But
-
-Passer d'un produit qui fonctionne a un produit que l'on peut vendre sereinement.
-
-## Etat de phase
-
-- **non commencee**
-
-## Etape 6.1 - Onboarding tenant
-
-### Travail a faire
-
-- rendre la configuration initiale plus guidee
-- verifier :
-  - numero principal
-  - email de notification
-  - message d'accueil
-  - horaires
-  - numero de transfert
-
-## Etape 6.2 - Checklist de readiness
-
-### Travail a faire
-
-- score de configuration plus strict
-- controles bloquants avant activation
-- affichage des points manquants
-
-## Etape 6.3 - Supervision production
-
-### Travail a faire
-
-- logs d'erreurs centralises
-- alertes minimales sur echec webhook
-- metriques cles :
-  - appels recus
-  - transferts reussis
-  - messages laisses
-  - erreurs webhook
-
----
-
-## Ordre d'implementation recommande mis a jour
-
-### Sprint 1
-
-- normalisation des statuts d'appel
-- status callbacks Twilio
-- fallback sur echec de transfert
-
-### Sprint 2
+- routage Twilio par numero appele
+- webhooks voix proteges et observables
+- statuts d'appel normalises
+- status callbacks et historique recent des evenements
+- fallback transfert -> voicemail en cas d'echec
+
+### Backoffice
 
 - fiche appel detaillee
-- inbox messages avec statuts metier
-- lecteur d'enregistrement
-- filtres et recherche
+- inbox messages exploitable
+- workflow de traitement et de rappel
+- filtres, recherche et pagination
+- audio lisible depuis le dashboard via proxy backend
 
-### Sprint 3
+### Donnees et securite
 
-- suppression des fallbacks multi-tenant dangereux
-- debut de cloisonnement des requetes
-- notion de numero principal
+- multi-tenant durci
+- suppression des fallbacks dangereux
+- bornage des acces dashboard par tenant
+- tests de cloisonnement inter-tenants
 
-### Sprint 4
+### Exploitation
 
-- terminer la phase 3 avec validation executable
-- workflow de rappel
-- notifications email ameliorees
-- journal d'activite
+- journal d'activite metier
+- notifications email plus propres
+- suivi de qui traite quoi et quand
 
-### Sprint 5
+### IA post-appel
 
-- transcription
+- transcription asynchrone des messages vocaux
 - resume automatique
-- premieres automatisations IA
+- detection d'intention
+- niveau d'urgence
+- pipeline STT + analyse texte distincts
 
 ---
 
-## Ou on en est maintenant
+## Conclusion
 
-### Fait
+Le plan de solidification est considere comme **termine** parce que son objectif est atteint :
 
-- phase 1 : solide cote application
-- phase 2 : solide cote application
-- phase 3 : validee cote code et tests
-- phase 4 : engagee et verifiee cote code
-- phase 5 : engagee et verifiee sur son socle technique
+- Receptio dispose d'un socle telephonique fiable
+- le produit est exploitable par une equipe
+- les flux critiques sont testes
+- les donnees et le multi-tenant sont suffisamment structures pour aller plus loin
 
-### Pas encore termine
+Ce qui manque maintenant n'est plus de la solidification du meme type, mais un **runtime conversationnel** capable de porter la promesse produit de ReceptioAI.
 
-- configuration Twilio dans la console
-- application des migrations phase 4
-- application des migrations phase 5
-- verification terrain Twilio des nouveaux flux
-- configuration d'un provider de transcription si l'on veut de la vraie voix -> texte
+---
 
-### Prochaine etape recommandee
+## Suite recommandee
 
-Finaliser la mise en production des phases 4 et 5 :
+La prochaine etape n'est pas une "phase 6" de ce plan.
 
-- appliquer les migrations recentes
-- verifier les cas reels Twilio avec numeros connus et inconnus
-- confirmer le rendu des emails en environnement reel
-- tester une vraie transcription audio en environnement public si un provider est configure
+La suite recommandee est :
 
-Une fois cela valide, enchainer sur :
+- ouvrir **`plan-ia-conversationnelle.md`**
+- considerer ce plan de solidification comme le prerequis termine
+- traiter l'exploitation production comme un chantier parallele d'industrialisation
 
-- suggestions de reponse
-- exploitation de la FAQ
-- automatisations IA plus avancees
+En pratique :
+
+- la conversation live devient le sujet produit principal
+- l'industrialisation prod reste necessaire, mais elle ne doit plus dicter la roadmap fonctionnelle
+
+---
+
+## Chantiers paralleles a conserver
+
+Ces sujets ne prolongent pas le plan produit principal, mais doivent rester suivis :
+
+- verification des migrations sur chaque environnement
+- supervision durable du worker de queue
+- verification terrain Twilio sur environnement public
+- hygiene de deploiement et observabilite production
