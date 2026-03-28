@@ -55,7 +55,11 @@ defineProps<Props>();
                         <CardTitle>Panneau d’intégrations</CardTitle>
                     </CardHeader>
                     <CardContent class="grid gap-4 md:grid-cols-2">
-                        <div v-for="integration in integrations" :key="integration.name" class="rounded-[1.75rem] border border-border/60 bg-background p-5 shadow-[0_12px_36px_-30px_rgba(15,23,42,0.35)]">
+                        <div
+                            v-for="integration in integrations"
+                            :key="integration.name"
+                            class="rounded-[1.75rem] border border-border/60 bg-background p-5 shadow-[0_12px_36px_-30px_rgba(15,23,42,0.35)]"
+                        >
                             <div class="flex items-center justify-between gap-3">
                                 <p class="text-sm font-medium">{{ integration.name }}</p>
                                 <ToneBadge :label="integration.status" :tone="integration.tone" />
@@ -71,7 +75,11 @@ defineProps<Props>();
                         <CardTitle>Points de contrôle</CardTitle>
                     </CardHeader>
                     <CardContent class="space-y-3">
-                        <div v-for="item in deploymentChecklist" :key="item.label" class="flex items-center justify-between rounded-[1.5rem] border border-border/60 px-4 py-3">
+                        <div
+                            v-for="item in deploymentChecklist"
+                            :key="item.label"
+                            class="flex items-center justify-between rounded-[1.5rem] border border-border/60 px-4 py-3"
+                        >
                             <span class="text-sm font-medium">{{ item.label }}</span>
                             <ToneBadge :label="item.done ? 'OK' : 'À faire'" :tone="item.done ? 'success' : 'warning'" />
                         </div>
@@ -85,10 +93,17 @@ defineProps<Props>();
                     <CardTitle>Lecture de service</CardTitle>
                 </CardHeader>
                 <CardContent class="grid gap-4 md:grid-cols-3">
-                    <div v-for="item in healthFeed" :key="item.title" class="rounded-[1.75rem] border border-border/60 bg-background p-5 shadow-[0_12px_36px_-30px_rgba(15,23,42,0.35)]">
+                    <div
+                        v-for="item in healthFeed"
+                        :key="item.title"
+                        class="rounded-[1.75rem] border border-border/60 bg-background p-5 shadow-[0_12px_36px_-30px_rgba(15,23,42,0.35)]"
+                    >
                         <div class="flex items-center justify-between gap-3">
                             <p class="text-sm font-medium">{{ item.title }}</p>
-                            <ToneBadge :label="item.tone === 'success' ? 'Stable' : item.tone === 'warning' ? 'Attention' : 'Info'" :tone="item.tone" />
+                            <ToneBadge
+                                :label="item.tone === 'success' ? 'Stable' : item.tone === 'warning' ? 'Attention' : 'Info'"
+                                :tone="item.tone"
+                            />
                         </div>
                         <p class="mt-3 text-sm leading-6 text-muted-foreground">{{ item.description }}</p>
                     </div>

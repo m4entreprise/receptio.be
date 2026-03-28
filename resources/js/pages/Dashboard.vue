@@ -163,7 +163,12 @@ const flashSuccess = page.props.flash?.success;
                                 </div>
                                 <div class="grid gap-2">
                                     <Label for="notification_email">Email de notification</Label>
-                                    <Input id="notification_email" type="email" v-model="form.notification_email" placeholder="contact@entreprise.be" />
+                                    <Input
+                                        id="notification_email"
+                                        type="email"
+                                        v-model="form.notification_email"
+                                        placeholder="contact@entreprise.be"
+                                    />
                                     <InputError :message="form.errors.notification_email" />
                                 </div>
                                 <div class="grid gap-4 md:grid-cols-2">
@@ -236,7 +241,7 @@ const flashSuccess = page.props.flash?.success;
                             <CardDescription>Utilise cette URL pour relier le numéro entrant au standard.</CardDescription>
                         </CardHeader>
                         <CardContent class="space-y-3 text-sm">
-                            <div class="rounded-lg border bg-muted/40 p-3 font-mono break-all">
+                            <div class="break-all rounded-lg border bg-muted/40 p-3 font-mono">
                                 {{ webhooks.incoming }}
                             </div>
                             <p class="text-muted-foreground">
@@ -273,7 +278,9 @@ const flashSuccess = page.props.flash?.success;
                         <div v-for="call in recentCalls" :key="call.id" class="rounded-xl border p-4">
                             <div class="flex flex-col justify-between gap-2 md:flex-row md:items-start">
                                 <div class="space-y-1">
-                                    <div class="text-sm font-medium">{{ call.from_number ?? 'Numéro inconnu' }} -> {{ call.to_number ?? 'Numéro principal' }}</div>
+                                    <div class="text-sm font-medium">
+                                        {{ call.from_number ?? 'Numéro inconnu' }} -> {{ call.to_number ?? 'Numéro principal' }}
+                                    </div>
                                     <div class="text-xs text-muted-foreground">
                                         {{ call.started_at ? new Date(call.started_at).toLocaleString('fr-BE') : 'Date inconnue' }}
                                     </div>
@@ -284,7 +291,10 @@ const flashSuccess = page.props.flash?.success;
                             </div>
                             <div class="mt-3 text-sm text-muted-foreground">{{ call.summary ?? 'Aucun résumé disponible.' }}</div>
                             <div v-if="call.message" class="mt-3 rounded-lg bg-muted/40 p-3 text-sm">
-                                <div><span class="font-medium">Appelant :</span> {{ call.message.caller_name ?? call.message.caller_number ?? 'Inconnu' }}</div>
+                                <div>
+                                    <span class="font-medium">Appelant :</span>
+                                    {{ call.message.caller_name ?? call.message.caller_number ?? 'Inconnu' }}
+                                </div>
                                 <div><span class="font-medium">Message :</span> {{ call.message.message_text ?? 'Message vocal enregistré.' }}</div>
                                 <a
                                     v-if="call.message.recording_url"

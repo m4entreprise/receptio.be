@@ -99,11 +99,16 @@ const serviceMarkers = [
                                     <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Organisation active</p>
                                     <p class="text-2xl font-semibold tracking-tight text-foreground">{{ tenant?.name ?? 'Receptio' }}</p>
                                     <p class="max-w-2xl text-sm leading-6 text-muted-foreground">
-                                        {{ serviceStatus.description }} Les indicateurs critiques et les accès d’action restent centralisés sur cette vue.
+                                        {{ serviceStatus.description }} Les indicateurs critiques et les accès d’action restent centralisés sur cette
+                                        vue.
                                     </p>
                                 </div>
                                 <div class="grid gap-3 md:grid-cols-2">
-                                    <div v-for="item in serviceMarkers" :key="item.title" class="rounded-2xl border border-border/60 bg-background px-4 py-4">
+                                    <div
+                                        v-for="item in serviceMarkers"
+                                        :key="item.title"
+                                        class="rounded-2xl border border-border/60 bg-background px-4 py-4"
+                                    >
                                         <div class="mb-3 inline-flex rounded-xl border border-border/60 bg-muted/40 p-2 text-foreground">
                                             <component :is="item.icon" class="size-4" />
                                         </div>
@@ -156,9 +161,15 @@ const serviceMarkers = [
                                         </div>
                                         <p v-if="item.description" class="text-sm text-muted-foreground">{{ item.description }}</p>
                                         <div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                                            <span>{{ item.happened_at ? new Date(item.happened_at).toLocaleString('fr-BE') : 'Horodatage inconnu' }}</span>
+                                            <span>{{
+                                                item.happened_at ? new Date(item.happened_at).toLocaleString('fr-BE') : 'Horodatage inconnu'
+                                            }}</span>
                                             <span v-if="item.user_name">Par {{ item.user_name }}</span>
-                                            <Link v-if="item.call_id" :href="route('dashboard.calls.show', item.call_id)" class="font-medium text-foreground">
+                                            <Link
+                                                v-if="item.call_id"
+                                                :href="route('dashboard.calls.show', item.call_id)"
+                                                class="font-medium text-foreground"
+                                            >
                                                 Voir l'appel
                                             </Link>
                                         </div>
@@ -203,7 +214,9 @@ const serviceMarkers = [
                                         </div>
                                         <p class="text-sm text-muted-foreground">{{ call.to_number ?? 'Ligne principale' }}</p>
                                     </div>
-                                    <p class="mt-3 text-sm leading-6 text-muted-foreground">{{ call.summary ?? 'Aucun résumé disponible pour cet appel.' }}</p>
+                                    <p class="mt-3 text-sm leading-6 text-muted-foreground">
+                                        {{ call.summary ?? 'Aucun résumé disponible pour cet appel.' }}
+                                    </p>
                                 </div>
                             </div>
                         </CardContent>

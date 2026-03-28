@@ -10,8 +10,8 @@ import { Label } from '@/components/ui/label';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { type SharedData } from '@/types';
 import type {
-    AssigneeOption,
     AppliedFilters,
+    AssigneeOption,
     InboxMessageItem,
     PaginationData,
     SelectOption,
@@ -224,7 +224,13 @@ const updateStatus = (messageId: number, status: string) => {
                                             <ToneBadge
                                                 v-if="message.urgency_level"
                                                 :label="`Urgence ${message.urgency_level}`"
-                                                :tone="message.urgency_level === 'high' ? 'warning' : message.urgency_level === 'medium' ? 'info' : 'neutral'"
+                                                :tone="
+                                                    message.urgency_level === 'high'
+                                                        ? 'warning'
+                                                        : message.urgency_level === 'medium'
+                                                          ? 'info'
+                                                          : 'neutral'
+                                                "
                                             />
                                         </div>
                                         <p class="text-sm text-muted-foreground">{{ message.phone }}</p>
@@ -238,13 +244,21 @@ const updateStatus = (messageId: number, status: string) => {
                                 <div class="mt-4 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
                                     <div class="space-y-3 rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
                                         <p class="leading-6">{{ message.excerpt }}</p>
-                                        <audio v-if="message.recording_playback_url" :src="message.recording_playback_url" controls class="w-full" preload="none" />
+                                        <audio
+                                            v-if="message.recording_playback_url"
+                                            :src="message.recording_playback_url"
+                                            controls
+                                            class="w-full"
+                                            preload="none"
+                                        />
                                         <p v-else class="text-xs">Aucun enregistrement audio disponible.</p>
                                     </div>
                                     <div class="space-y-3 rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
                                         <div>
                                             <p class="font-medium text-foreground">Résumé d’exploitation</p>
-                                            <p class="mt-2 leading-6">{{ message.ai_summary ?? message.summary ?? 'Le message n’a pas encore de résumé enrichi.' }}</p>
+                                            <p class="mt-2 leading-6">
+                                                {{ message.ai_summary ?? message.summary ?? 'Le message n’a pas encore de résumé enrichi.' }}
+                                            </p>
                                         </div>
                                         <div class="space-y-1 text-xs">
                                             <p>Intent détectée: {{ message.ai_intent ?? 'Non définie' }}</p>
@@ -254,7 +268,9 @@ const updateStatus = (messageId: number, status: string) => {
                                             <p>Assigné à: {{ message.assigned_to_name ?? 'Personne' }}</p>
                                             <p>Traité par: {{ message.handled_by_name ?? 'Pas encore traité' }}</p>
                                             <p v-if="message.handled_at">Traité le: {{ new Date(message.handled_at).toLocaleString('fr-BE') }}</p>
-                                            <p v-if="message.callback_due_at">Rappel prevu: {{ new Date(message.callback_due_at).toLocaleString('fr-BE') }}</p>
+                                            <p v-if="message.callback_due_at">
+                                                Rappel prevu: {{ new Date(message.callback_due_at).toLocaleString('fr-BE') }}
+                                            </p>
                                         </div>
                                         <div class="grid gap-3 rounded-2xl border border-border/60 bg-muted/20 p-3">
                                             <div class="grid gap-2">
@@ -272,7 +288,11 @@ const updateStatus = (messageId: number, status: string) => {
                                             </div>
                                             <div class="grid gap-2">
                                                 <Label :for="`callback-${message.id}`">Rappeler plus tard</Label>
-                                                <Input :id="`callback-${message.id}`" v-model="workflowDrafts[message.id].callback_due_at" type="datetime-local" />
+                                                <Input
+                                                    :id="`callback-${message.id}`"
+                                                    v-model="workflowDrafts[message.id].callback_due_at"
+                                                    type="datetime-local"
+                                                />
                                             </div>
                                         </div>
                                         <div class="flex flex-wrap gap-2">

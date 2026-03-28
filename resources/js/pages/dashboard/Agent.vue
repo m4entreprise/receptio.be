@@ -57,6 +57,9 @@ const form = useForm({
     welcome_message: props.settings.welcome_message,
     after_hours_message: props.settings.after_hours_message,
     faq_content: props.settings.faq_content,
+    conversation_enabled: props.settings.conversation_enabled,
+    conversation_prompt: props.settings.conversation_prompt,
+    max_clarification_turns: props.settings.max_clarification_turns,
     transfer_phone_number: props.settings.transfer_phone_number,
     notification_email: props.settings.notification_email,
     opens_at: props.settings.opens_at ?? '',
@@ -74,8 +77,21 @@ const submit = () => {
 const presets = [
     { label: 'Ton conversationnel', value: 'Sobre et rassurant', tone: 'default' as const },
     { label: 'Langue principale', value: props.tenant?.locale ?? 'fr-BE', tone: 'neutral' as const },
-    { label: 'Escalade humaine', value: props.summary.transfer_enabled ? 'Active' : 'Non renseignée', tone: props.summary.transfer_enabled ? 'success' as const : 'warning' as const },
-    { label: 'Notification', value: props.summary.notification_ready ? 'Active' : 'Non renseignée', tone: props.summary.notification_ready ? 'success' as const : 'warning' as const },
+    {
+        label: 'Mode conversationnel',
+        value: props.settings.conversation_enabled ? 'Actif' : 'Désactivé',
+        tone: props.settings.conversation_enabled ? ('success' as const) : ('neutral' as const),
+    },
+    {
+        label: 'Escalade humaine',
+        value: props.summary.transfer_enabled ? 'Active' : 'Non renseignée',
+        tone: props.summary.transfer_enabled ? ('success' as const) : ('warning' as const),
+    },
+    {
+        label: 'Notification',
+        value: props.summary.notification_ready ? 'Active' : 'Non renseignée',
+        tone: props.summary.notification_ready ? ('success' as const) : ('warning' as const),
+    },
 ];
 </script>
 
@@ -132,7 +148,12 @@ const presets = [
                                 </div>
                                 <div class="grid gap-2 md:col-span-2">
                                     <Label for="notification_email">Email de notification</Label>
-                                    <Input id="notification_email" type="email" v-model="form.notification_email" placeholder="reception@entreprise.be" />
+                                    <Input
+                                        id="notification_email"
+                                        type="email"
+                                        v-model="form.notification_email"
+                                        placeholder="reception@entreprise.be"
+                                    />
                                     <InputError :message="form.errors.notification_email" />
                                 </div>
                             </div>
@@ -171,6 +192,36 @@ const presets = [
                                 <InputError :message="form.errors.faq_content" />
                             </div>
 
+                            <div class="grid gap-4 rounded-[1.75rem] border border-border/60 bg-muted/15 p-5">
+                                <label class="flex items-start gap-3">
+                                    <input v-model="form.conversation_enabled" type="checkbox" class="mt-1 rounded border-neutral-300" />
+                                    <span class="space-y-1">
+                                        <span class="block text-sm font-medium">Activer le runtime conversationnel</span>
+                                        <span class="block text-sm text-muted-foreground">
+                                            Active Twilio ConversationRelay pendant les horaires dâ€™ouverture au lieu du menu DTMF.
+                                        </span>
+                                    </span>
+                                </label>
+                                <InputError :message="form.errors.conversation_enabled" />
+
+                                <div class="grid gap-2">
+                                    <Label for="conversation_prompt">Prompt conversationnel par tenant</Label>
+                                    <textarea
+                                        id="conversation_prompt"
+                                        v-model="form.conversation_prompt"
+                                        class="min-h-32 rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm"
+                                        placeholder="Règles métier, ton attendu, sujets sensibles et politique dâ€™escalade."
+                                    ></textarea>
+                                    <InputError :message="form.errors.conversation_prompt" />
+                                </div>
+
+                                <div class="grid gap-2 md:max-w-xs">
+                                    <Label for="max_clarification_turns">Clarifications max</Label>
+                                    <Input id="max_clarification_turns" type="number" min="1" max="5" v-model="form.max_clarification_turns" />
+                                    <InputError :message="form.errors.max_clarification_turns" />
+                                </div>
+                            </div>
+
                             <div class="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
                                 <div class="grid gap-4 rounded-[1.75rem] border border-border/60 bg-muted/15 p-5">
                                     <div class="grid gap-2">
@@ -187,8 +238,17 @@ const presets = [
                                 <div class="grid gap-2 rounded-[1.75rem] border border-border/60 bg-muted/15 p-5">
                                     <Label>Jours ouvrés</Label>
                                     <div class="flex flex-wrap gap-3">
-                                        <label v-for="day in businessDays" :key="day.value" class="flex items-center gap-2 rounded-full border border-border/60 px-3 py-2 text-sm">
-                                            <input v-model="form.business_days" :value="day.value" type="checkbox" class="rounded border-neutral-300" />
+                                        <label
+                                            v-for="day in businessDays"
+                                            :key="day.value"
+                                            class="flex items-center gap-2 rounded-full border border-border/60 px-3 py-2 text-sm"
+                                        >
+                                            <input
+                                                v-model="form.business_days"
+                                                :value="day.value"
+                                                type="checkbox"
+                                                class="rounded border-neutral-300"
+                                            />
                                             <span>{{ day.label }}</span>
                                         </label>
                                     </div>
@@ -223,7 +283,11 @@ const presets = [
                             <CardTitle>Cadre conversationnel</CardTitle>
                         </CardHeader>
                         <CardContent class="space-y-4">
-                            <div v-for="capability in capabilities" :key="capability.title" class="rounded-[1.5rem] border border-border/60 bg-background p-4">
+                            <div
+                                v-for="capability in capabilities"
+                                :key="capability.title"
+                                class="rounded-[1.5rem] border border-border/60 bg-background p-4"
+                            >
                                 <p class="text-sm font-medium">{{ capability.title }}</p>
                                 <ul class="mt-3 space-y-2 text-sm text-muted-foreground">
                                     <li v-for="item in capability.items" :key="item">{{ item }}</li>

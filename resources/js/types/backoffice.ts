@@ -168,6 +168,9 @@ export interface SettingsFormData {
     welcome_message: string;
     after_hours_message: string;
     faq_content: string;
+    conversation_enabled: boolean;
+    conversation_prompt: string;
+    max_clarification_turns: number;
     transfer_phone_number: string;
     notification_email: string;
     opens_at: string | null;

@@ -4,6 +4,7 @@ use App\Http\Controllers\AgentSettingsController;
 use App\Http\Controllers\BackofficeController;
 use App\Http\Controllers\BackofficeMessageController;
 use App\Http\Controllers\BackofficeRecordingController;
+use App\Http\Controllers\Internal\RealtimeCallController;
 use App\Http\Controllers\TwilioVoiceWebhookController;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Route;
@@ -36,6 +37,17 @@ Route::prefix('webhooks/twilio/voice')
         Route::post('status', [TwilioVoiceWebhookController::class, 'status'])->name('webhooks.twilio.voice.status');
         Route::post('recording', [TwilioVoiceWebhookController::class, 'recording'])->name('webhooks.twilio.voice.recording');
         Route::post('ping', [TwilioVoiceWebhookController::class, 'ping'])->name('webhooks.twilio.voice.ping');
+    });
+
+Route::prefix('internal/realtime')
+    ->withoutMiddleware([ValidateCsrfToken::class])
+    ->middleware(['realtime.internal'])
+    ->group(function () {
+        Route::get('calls/{callSid}/bootstrap', [RealtimeCallController::class, 'bootstrap'])->name('internal.realtime.calls.bootstrap');
+        Route::post('calls/{callSid}/turns', [RealtimeCallController::class, 'storeTurn'])->name('internal.realtime.calls.turns.store');
+        Route::post('calls/{callSid}/resolution', [RealtimeCallController::class, 'storeResolution'])->name('internal.realtime.calls.resolution.store');
+        Route::post('calls/{callSid}/transfer', [RealtimeCallController::class, 'storeTransfer'])->name('internal.realtime.calls.transfer.store');
+        Route::post('calls/{callSid}/fallback', [RealtimeCallController::class, 'storeFallback'])->name('internal.realtime.calls.fallback.store');
     });
 
 require __DIR__.'/settings.php';

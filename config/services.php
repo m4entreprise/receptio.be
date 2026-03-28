@@ -38,12 +38,17 @@ return [
     'twilio' => [
         'account_sid' => env('TWILIO_ACCOUNT_SID'),
         'auth_token' => env('TWILIO_AUTH_TOKEN'),
+        'conversation_relay_url' => env('TWILIO_CONVERSATION_RELAY_URL'),
     ],
 
     'openai' => [
         'api_key' => env('OPENAI_API_KEY'),
         'transcription_model' => env('OPENAI_TRANSCRIPTION_MODEL', 'gpt-4o-mini-transcribe'),
         'text_model' => env('OPENAI_TEXT_MODEL', 'gpt-5.4-mini'),
+    ],
+
+    'realtime' => [
+        'internal_token' => env('REALTIME_INTERNAL_TOKEN'),
     ],
 
 ];

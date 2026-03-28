@@ -46,6 +46,7 @@ class TwilioVoiceWebhookController extends Controller
                 'from_number' => $request->string('From')->toString(),
                 'to_number' => $request->string('To')->toString(),
                 'started_at' => now(),
+                'channel' => Call::CHANNEL_MENU,
                 'metadata' => $request->all(),
             ],
         );
@@ -70,7 +71,11 @@ class TwilioVoiceWebhookController extends Controller
         ]));
 
         if (! $this->isOpen($agentConfig)) {
-            $call->update(['status' => 'after_hours']);
+            $call->update([
+                'status' => 'after_hours',
+                'channel' => Call::CHANNEL_VOICEMAIL,
+                'resolution_type' => 'after_hours',
+            ]);
 
             Log::info('twilio.webhook.incoming_after_hours', $this->webhookContext($request, $call));
 
@@ -80,8 +85,41 @@ class TwilioVoiceWebhookController extends Controller
             ]));
         }
 
+        if ($agentConfig->conversation_enabled) {
+            if ($this->conversationRelayConfigured()) {
+                $call->update([
+                    'status' => 'in_progress',
+                    'channel' => Call::CHANNEL_CONVERSATION_AI,
+                    'conversation_status' => 'routing',
+                ]);
+
+                Log::info('twilio.webhook.incoming_conversation_started', $this->webhookContext($request, $call, [
+                    'conversation_enabled' => true,
+                ]));
+
+                return $this->xmlResponse($this->buildConversationRelayTwiml($call, $tenant, $agentConfig));
+            }
+
+            $call->update([
+                'status' => 'voicemail_prompted',
+                'channel' => Call::CHANNEL_CONVERSATION_AI,
+                'conversation_status' => 'fallback_requested',
+                'metadata' => $this->mergeMetadata($call, [
+                    'fallback_target' => 'voicemail',
+                    'conversation_runtime_unavailable_at' => now()->toIso8601String(),
+                ]),
+            ]);
+
+            Log::warning('twilio.webhook.incoming_conversation_unavailable', $this->webhookContext($request, $call));
+
+            return $this->conversationUnavailableFallbackResponse();
+        }
+
         if (blank($agentConfig->transfer_phone_number)) {
-            $call->update(['status' => 'voicemail_prompted']);
+            $call->update([
+                'status' => 'voicemail_prompted',
+                'channel' => Call::CHANNEL_VOICEMAIL,
+            ]);
 
             Log::info('twilio.webhook.incoming_voicemail_direct', $this->webhookContext($request, $call));
 
@@ -265,6 +303,10 @@ class TwilioVoiceWebhookController extends Controller
         }
 
         if ($call) {
+            if ($this->isConversationRelayCallback($request)) {
+                return $this->handleConversationRelayCallback($request, $call);
+            }
+
             $status = $this->resolveCallbackStatus($call, $request);
             $callDuration = $this->requestInteger($request, 'CallDuration');
             $dialCallDuration = $this->requestInteger($request, 'DialCallDuration');
@@ -366,6 +408,26 @@ class TwilioVoiceWebhookController extends Controller
         return '<?xml version="1.0" encoding="UTF-8"?><Response>'.implode('', $verbs).'</Response>';
     }
 
+    private function buildConversationRelayTwiml(Call $call, $tenant, AgentConfig $agentConfig): string
+    {
+        return $this->buildTwiml([
+            '<Connect action="'.e(route('webhooks.twilio.voice.status', absolute: true)).'" method="POST">'.
+                '<ConversationRelay '.
+                    'url="'.e((string) config('services.twilio.conversation_relay_url')).'" '.
+                    'welcomeGreeting="'.e($agentConfig->welcome_message ?: "Bonjour, vous êtes bien chez {$tenant->name}. Comment puis-je vous aider ?").'" '.
+                    'language="fr-FR" '.
+                    'ttsProvider="Google" '.
+                    'transcriptionProvider="Deepgram" '.
+                    'speechModel="nova-3-general" '.
+                    'interruptible="speech" '.
+                    'dtmfDetection="true">'.
+                    '<Parameter name="callSid" value="'.e((string) $call->external_sid).'"/>'.
+                    '<Parameter name="tenantId" value="'.e((string) $tenant->id).'"/>'.
+                    '</ConversationRelay>'.
+            '</Connect>',
+        ]);
+    }
+
     private function gather(string $action, array $verbs): string
     {
         return '<Gather input="dtmf" numDigits="1" timeout="4" action="'.e($action).'" method="POST">'.implode('', $verbs).'</Gather>';
@@ -379,6 +441,189 @@ class TwilioVoiceWebhookController extends Controller
     private function say(string $message): string
     {
         return '<Say language="fr-BE">'.e($message).'</Say>';
+    }
+
+    private function conversationRelayConfigured(): bool
+    {
+        $url = config('services.twilio.conversation_relay_url');
+
+        return is_string($url) && str_starts_with($url, 'wss://');
+    }
+
+    private function isConversationRelayCallback(Request $request): bool
+    {
+        return filled($request->string('SessionStatus')->toString())
+            || filled($request->string('SessionId')->toString())
+            || filled($request->string('HandoffData')->toString());
+    }
+
+    private function handleConversationRelayCallback(Request $request, Call $call): Response
+    {
+        $handoffData = $this->decodeHandoffData($request->string('HandoffData')->toString());
+        $sessionStatus = $request->string('SessionStatus')->toString();
+        $sessionEvent = $this->filterNullValues([
+            'received_at' => now()->toIso8601String(),
+            'session_id' => $request->string('SessionId')->toString() ?: null,
+            'session_status' => $sessionStatus ?: null,
+            'session_duration_seconds' => $this->requestInteger($request, 'SessionDuration'),
+            'handoff_data' => $handoffData ?: null,
+        ]);
+
+        $metadata = $this->mergeMetadata($call, [
+            'conversation_relay' => [
+                'last_event' => $sessionEvent,
+                'events' => array_values(array_slice([
+                    ...collect(data_get($call->metadata, 'conversation_relay.events', []))->filter(fn ($event) => is_array($event))->all(),
+                    $sessionEvent,
+                ], -10)),
+            ],
+        ]);
+
+        $call->update([
+            'channel' => Call::CHANNEL_CONVERSATION_AI,
+            'conversation_status' => $sessionStatus ?: ($call->conversation_status ?? 'active'),
+            'metadata' => $metadata,
+        ]);
+
+        $action = data_get($handoffData, 'action');
+
+        if ($action === 'transfer') {
+            return $this->handleConversationRelayTransfer($request, $call, $handoffData, $metadata);
+        }
+
+        if (in_array($action, ['voicemail', 'fallback_voicemail'], true) || $sessionStatus === 'failed') {
+            return $this->handleConversationRelayFallback($request, $call, $handoffData, $metadata, $sessionStatus);
+        }
+
+        if ($action === 'hangup') {
+            $call->update([
+                'status' => 'completed',
+                'conversation_status' => 'completed',
+                'ended_at' => $call->ended_at ?? now(),
+            ]);
+
+            return $this->xmlResponse($this->buildTwiml([
+                '<Hangup/>',
+            ]));
+        }
+
+        if ($sessionStatus === 'ended' || $sessionStatus === 'completed') {
+            $call->update([
+                'status' => $call->resolution_type === 'transferred' ? 'transferred' : $this->completedStatusFor($call),
+                'conversation_status' => 'completed',
+                'ended_at' => $call->ended_at ?? now(),
+            ]);
+        }
+
+        Log::info('twilio.webhook.conversation_relay_processed', $this->webhookContext($request, $call, [
+            'session_status' => $sessionStatus ?: null,
+            'handoff_action' => is_string($action) ? $action : null,
+        ]));
+
+        return response('', 204);
+    }
+
+    private function handleConversationRelayTransfer(Request $request, Call $call, array $handoffData, array $metadata): Response
+    {
+        $targetPhoneNumber = data_get($handoffData, 'target_phone_number') ?: $call->tenant->agentConfig?->transfer_phone_number;
+        $reason = data_get($handoffData, 'reason');
+        $summary = data_get($handoffData, 'summary');
+
+        if (! filled($targetPhoneNumber)) {
+            return $this->handleConversationRelayFallback($request, $call, [
+                'action' => 'fallback_voicemail',
+                'reason' => $reason ?: 'transfer_phone_missing',
+                'summary' => $summary,
+            ], $metadata, 'failed');
+        }
+
+        $call->update([
+            'status' => 'transferring',
+            'conversation_status' => 'transfer_requested',
+            'escalation_reason' => is_string($reason) ? $reason : $call->escalation_reason,
+            'conversation_summary' => is_string($summary) ? $summary : $call->conversation_summary,
+            'summary' => is_string($summary) ? $summary : $call->summary,
+            'metadata' => array_merge($metadata, [
+                'conversation_transfer' => $this->filterNullValues([
+                    'requested_at' => now()->toIso8601String(),
+                    'target_phone_number' => $targetPhoneNumber,
+                    'reason' => is_string($reason) ? $reason : null,
+                ]),
+            ]),
+        ]);
+
+        $this->activityLogger->log(
+            tenant: $call->tenant,
+            eventType: 'transfer_attempted',
+            title: 'Transfert tente',
+            description: 'Le runtime conversationnel a demande une reprise humaine.',
+            call: $call->fresh(),
+            metadata: [
+                'transfer_phone_number' => $targetPhoneNumber,
+                'reason' => is_string($reason) ? $reason : null,
+            ],
+        );
+
+        Log::info('twilio.webhook.conversation_relay_transfer', $this->webhookContext($request, $call, [
+            'transfer_phone_number' => $targetPhoneNumber,
+        ]));
+
+        return $this->xmlResponse($this->buildTwiml([
+            '<Say language="fr-BE">Nous vous transférons immédiatement.</Say>',
+            '<Dial action="'.e(route('webhooks.twilio.voice.status', absolute: true)).'" method="POST">'.e($targetPhoneNumber).'</Dial>',
+        ]));
+    }
+
+    private function handleConversationRelayFallback(Request $request, Call $call, array $handoffData, array $metadata, ?string $sessionStatus = null): Response
+    {
+        $reason = data_get($handoffData, 'reason');
+        $summary = data_get($handoffData, 'summary');
+
+        $call->update([
+            'status' => 'voicemail_prompted',
+            'conversation_status' => 'fallback_requested',
+            'escalation_reason' => is_string($reason) ? $reason : $call->escalation_reason,
+            'conversation_summary' => is_string($summary) ? $summary : $call->conversation_summary,
+            'summary' => is_string($summary) ? $summary : ($call->summary ?: 'Fallback vers messagerie apres incident conversationnel.'),
+            'metadata' => array_merge($metadata, [
+                'fallback_target' => 'voicemail',
+                'conversation_fallback' => $this->filterNullValues([
+                    'requested_at' => now()->toIso8601String(),
+                    'reason' => is_string($reason) ? $reason : null,
+                    'session_status' => $sessionStatus,
+                ]),
+            ]),
+        ]);
+
+        $this->activityLogger->log(
+            tenant: $call->tenant,
+            eventType: 'conversation_fallback_requested',
+            title: 'Fallback conversationnel',
+            description: 'Le mode conversationnel a ete interrompu et repasse vers la messagerie.',
+            call: $call->fresh(),
+            metadata: [
+                'reason' => is_string($reason) ? $reason : null,
+                'session_status' => $sessionStatus,
+            ],
+        );
+
+        Log::warning('twilio.webhook.conversation_relay_fallback', $this->webhookContext($request, $call, [
+            'session_status' => $sessionStatus,
+            'reason' => is_string($reason) ? $reason : null,
+        ]));
+
+        return $this->conversationUnavailableFallbackResponse();
+    }
+
+    private function decodeHandoffData(string $handoffData): array
+    {
+        if ($handoffData === '') {
+            return [];
+        }
+
+        $decoded = json_decode($handoffData, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     private function summaryForStatus(Call $call, string $status, array $metadata): ?string
@@ -428,6 +673,14 @@ class TwilioVoiceWebhookController extends Controller
     {
         return $this->xmlResponse($this->buildTwiml([
             $this->say('La ligne humaine est indisponible pour le moment. Merci de laisser un message après le bip.'),
+            $this->record(route('webhooks.twilio.voice.recording', absolute: true)),
+        ]));
+    }
+
+    private function conversationUnavailableFallbackResponse(): Response
+    {
+        return $this->xmlResponse($this->buildTwiml([
+            $this->say('Notre standard conversationnel est temporairement indisponible. Merci de laisser un message après le bip.'),
             $this->record(route('webhooks.twilio.voice.recording', absolute: true)),
         ]));
     }

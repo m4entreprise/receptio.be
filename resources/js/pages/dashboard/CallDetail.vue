@@ -127,7 +127,9 @@ defineProps<Props>();
                             <ToneBadge
                                 v-if="call.message.urgency_level"
                                 :label="`Urgence ${call.message.urgency_level}`"
-                                :tone="call.message.urgency_level === 'high' ? 'warning' : call.message.urgency_level === 'medium' ? 'info' : 'neutral'"
+                                :tone="
+                                    call.message.urgency_level === 'high' ? 'warning' : call.message.urgency_level === 'medium' ? 'info' : 'neutral'
+                                "
                             />
                         </div>
                         <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
@@ -145,7 +147,13 @@ defineProps<Props>();
                             <p class="font-medium text-foreground">Résumé automatique</p>
                             <p class="mt-2 leading-6">{{ call.message.ai_summary ?? call.summary ?? 'Aucun résumé automatique disponible.' }}</p>
                         </div>
-                        <audio v-if="call.message.recording_playback_url" :src="call.message.recording_playback_url" controls class="w-full" preload="none" />
+                        <audio
+                            v-if="call.message.recording_playback_url"
+                            :src="call.message.recording_playback_url"
+                            controls
+                            class="w-full"
+                            preload="none"
+                        />
                         <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
                             <p>Assigné à: {{ call.message.assigned_to_name ?? 'Personne' }}</p>
                             <p class="mt-1">Traité par: {{ call.message.handled_by_name ?? 'Pas encore traité' }}</p>

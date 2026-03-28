@@ -89,7 +89,11 @@ const formatDate = (value: string | null) => {
                             :action-href="route('dashboard.agent')"
                         />
                         <div v-else class="grid gap-4 md:grid-cols-2">
-                            <div v-for="number in numbers" :key="number.id" class="rounded-[1.75rem] border border-border/60 bg-background p-5 shadow-[0_12px_36px_-30px_rgba(15,23,42,0.35)]">
+                            <div
+                                v-for="number in numbers"
+                                :key="number.id"
+                                class="rounded-[1.75rem] border border-border/60 bg-background p-5 shadow-[0_12px_36px_-30px_rgba(15,23,42,0.35)]"
+                            >
                                 <div class="flex items-center justify-between gap-3">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <p class="text-sm font-medium">{{ number.label }}</p>

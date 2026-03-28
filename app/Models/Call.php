@@ -12,6 +12,12 @@ class Call extends Model
 {
     use HasFactory;
 
+    public const CHANNEL_MENU = 'menu';
+
+    public const CHANNEL_VOICEMAIL = 'voicemail';
+
+    public const CHANNEL_CONVERSATION_AI = 'conversation_ai';
+
     protected $fillable = [
         'tenant_id',
         'phone_number_id',
@@ -22,6 +28,11 @@ class Call extends Model
         'to_number',
         'started_at',
         'ended_at',
+        'channel',
+        'conversation_status',
+        'resolution_type',
+        'conversation_summary',
+        'escalation_reason',
         'transcript',
         'summary',
         'metadata',
@@ -34,6 +45,11 @@ class Call extends Model
             'ended_at' => 'datetime',
             'metadata' => 'array',
         ];
+    }
+
+    public function turns(): HasMany
+    {
+        return $this->hasMany(CallTurn::class)->orderBy('sequence')->orderBy('id');
     }
 
     public function message(): HasOne

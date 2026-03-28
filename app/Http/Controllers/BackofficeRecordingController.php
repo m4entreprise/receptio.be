@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\CallMessage;
 use App\Support\TenantResolver;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\PendingRequest;

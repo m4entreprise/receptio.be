@@ -26,7 +26,10 @@ const highlights = [
         <div class="relative mx-auto grid min-h-[calc(100svh-5rem)] w-full max-w-6xl items-center gap-10 lg:grid-cols-[1.05fr_0.95fr]">
             <section class="hidden lg:block">
                 <div class="max-w-xl">
-                    <Link :href="route('home')" class="inline-flex items-center gap-3 rounded-full border border-white/70 bg-white/70 px-4 py-2 shadow-sm backdrop-blur">
+                    <Link
+                        :href="route('home')"
+                        class="inline-flex items-center gap-3 rounded-full border border-white/70 bg-white/70 px-4 py-2 shadow-sm backdrop-blur"
+                    >
                         <div
                             class="flex size-11 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-700 to-cyan-500 text-white shadow-lg shadow-blue-200"
                         >
@@ -60,7 +63,9 @@ const highlights = [
             </section>
 
             <section class="mx-auto w-full max-w-md">
-                <div class="rounded-[2rem] border border-white/80 bg-white/88 p-8 shadow-[0_30px_80px_-30px_rgba(37,99,235,0.35)] backdrop-blur md:p-10">
+                <div
+                    class="bg-white/88 rounded-[2rem] border border-white/80 p-8 shadow-[0_30px_80px_-30px_rgba(37,99,235,0.35)] backdrop-blur md:p-10"
+                >
                     <div class="flex flex-col gap-8">
                         <div class="flex flex-col items-center gap-4 text-center">
                             <Link :href="route('home')" class="flex flex-col items-center gap-3 font-medium">

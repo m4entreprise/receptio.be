@@ -91,7 +91,12 @@ const submit = () => {
                 <div class="grid gap-2">
                     <div class="flex items-center justify-between">
                         <Label for="password" class="text-sm font-medium text-slate-700">Mot de passe</Label>
-                        <TextLink v-if="canResetPassword" :href="route('password.request')" class="text-sm text-slate-500 hover:text-slate-900" tabindex="5">
+                        <TextLink
+                            v-if="canResetPassword"
+                            :href="route('password.request')"
+                            class="text-sm text-slate-500 hover:text-slate-900"
+                            tabindex="5"
+                        >
                             Mot de passe oublie ?
                         </TextLink>
                     </div>
@@ -114,7 +119,12 @@ const submit = () => {
 
                 <div class="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3" tabindex="3">
                     <Label for="remember" class="flex items-center gap-3 text-sm font-medium text-slate-700">
-                        <Checkbox id="remember" v-model:checked="form.remember" tabindex="4" class="border-slate-300 data-[state=checked]:border-blue-700" />
+                        <Checkbox
+                            id="remember"
+                            v-model:checked="form.remember"
+                            tabindex="4"
+                            class="border-slate-300 data-[state=checked]:border-blue-700"
+                        />
                         <span>Rester connecte</span>
                     </Label>
                 </div>

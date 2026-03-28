@@ -52,7 +52,11 @@ defineProps<Props>();
 
             <div class="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
                 <div class="space-y-6">
-                    <Card v-for="panel in workspacePanels" :key="panel.title" class="border-border/70 bg-background/95 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.32)]">
+                    <Card
+                        v-for="panel in workspacePanels"
+                        :key="panel.title"
+                        class="border-border/70 bg-background/95 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.32)]"
+                    >
                         <CardHeader>
                             <CardDescription>Organisation</CardDescription>
                             <CardTitle>{{ panel.title }}</CardTitle>
@@ -91,7 +95,11 @@ defineProps<Props>();
                             <CardTitle>Principes de service</CardTitle>
                         </CardHeader>
                         <CardContent class="space-y-3">
-                            <div v-for="rule in governance" :key="rule" class="rounded-2xl border border-border/60 px-4 py-4 text-sm leading-6 text-muted-foreground">
+                            <div
+                                v-for="rule in governance"
+                                :key="rule"
+                                class="rounded-2xl border border-border/60 px-4 py-4 text-sm leading-6 text-muted-foreground"
+                            >
                                 {{ rule }}
                             </div>
                         </CardContent>

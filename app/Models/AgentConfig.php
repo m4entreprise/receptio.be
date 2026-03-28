@@ -16,6 +16,9 @@ class AgentConfig extends Model
         'welcome_message',
         'after_hours_message',
         'faq_content',
+        'conversation_enabled',
+        'conversation_prompt',
+        'max_clarification_turns',
         'transfer_phone_number',
         'notification_email',
         'opens_at',
@@ -27,6 +30,8 @@ class AgentConfig extends Model
     {
         return [
             'business_days' => 'array',
+            'conversation_enabled' => 'boolean',
+            'max_clarification_turns' => 'integer',
         ];
     }
 
