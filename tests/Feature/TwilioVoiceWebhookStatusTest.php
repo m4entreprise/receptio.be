@@ -107,7 +107,7 @@ test('calls dashboard uses final twilio status and duration metadata', function 
 
     $response->assertOk();
     $response->assertInertia(fn (Assert $page) => $page
-        ->component('dashboard/Calls')
+        ->component('dashboard/Calls', false)
         ->where('calls.0.status', 'transferred')
         ->where('calls.0.status_label', 'Transféré')
         ->where('calls.0.tone', 'success')
