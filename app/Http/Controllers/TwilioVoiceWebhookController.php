@@ -6,7 +6,7 @@ use App\Models\AgentConfig;
 use App\Models\Call;
 use App\Models\CallMessage;
 use App\Models\PhoneNumber;
-use App\Models\Tenant;
+use App\Support\TenantResolver;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
@@ -14,10 +14,12 @@ use Illuminate\Support\Facades\Mail;
 
 class TwilioVoiceWebhookController extends Controller
 {
+    public function __construct(private readonly TenantResolver $tenantResolver) {}
+
     public function incoming(Request $request): Response
     {
         $phoneNumber = $this->resolvePhoneNumber($request->string('To')->toString());
-        $tenant = $phoneNumber?->tenant ?? Tenant::with('agentConfig')->first();
+        $tenant = $phoneNumber?->tenant;
         $agentConfig = $tenant?->agentConfig;
 
         if (! $tenant || ! $agentConfig) {
@@ -25,9 +27,7 @@ class TwilioVoiceWebhookController extends Controller
                 'resolved_phone_number_id' => $phoneNumber?->id,
             ]));
 
-            return $this->xmlResponse($this->buildTwiml([
-                '<Say language="fr-BE">Le service est temporairement indisponible. Merci de rappeler plus tard.</Say>',
-            ]));
+            return $this->unavailableResponse();
         }
 
         $call = Call::updateOrCreate(
@@ -90,25 +90,31 @@ class TwilioVoiceWebhookController extends Controller
     public function menu(Request $request): Response
     {
         $call = Call::where('external_sid', $request->string('CallSid')->toString())->first();
-        $tenant = $call?->tenant ?? Tenant::with('agentConfig')->first();
+        $tenant = $call?->tenant;
         $agentConfig = $tenant?->agentConfig;
 
         Log::info('twilio.webhook.menu_received', $this->webhookContext($request, $call, [
             'digits' => $request->string('Digits')->toString() ?: null,
         ]));
 
+        if (! $call || ! $tenant || ! $agentConfig) {
+            Log::warning('twilio.webhook.menu_unroutable', $this->webhookContext($request, $call));
+
+            return $this->unavailableResponse();
+        }
+
         if ($request->string('Digits')->toString() === '1' && filled($agentConfig?->transfer_phone_number)) {
-            $call?->update(['status' => 'transferring']);
+            $call->update(['status' => 'transferring']);
 
             Log::info('twilio.webhook.menu_transfer_selected', $this->webhookContext($request, $call));
 
             return $this->xmlResponse($this->buildTwiml([
                 '<Say language="fr-BE">Nous vous transférons immédiatement.</Say>',
-                '<Dial action="' . e(route('webhooks.twilio.voice.status', absolute: true)) . '" method="POST">' . e($agentConfig->transfer_phone_number) . '</Dial>',
+                '<Dial action="'.e(route('webhooks.twilio.voice.status', absolute: true)).'" method="POST">'.e($agentConfig->transfer_phone_number).'</Dial>',
             ]));
         }
 
-        $call?->update(['status' => 'voicemail_prompted']);
+        $call->update(['status' => 'voicemail_prompted']);
 
         Log::info('twilio.webhook.menu_voicemail_selected', $this->webhookContext($request, $call));
 
@@ -258,22 +264,22 @@ class TwilioVoiceWebhookController extends Controller
 
     private function buildTwiml(array $verbs): string
     {
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response>" . implode('', $verbs) . '</Response>';
+        return '<?xml version="1.0" encoding="UTF-8"?><Response>'.implode('', $verbs).'</Response>';
     }
 
     private function gather(string $action, array $verbs): string
     {
-        return '<Gather input="dtmf" numDigits="1" timeout="4" action="' . e($action) . '" method="POST">' . implode('', $verbs) . '</Gather>';
+        return '<Gather input="dtmf" numDigits="1" timeout="4" action="'.e($action).'" method="POST">'.implode('', $verbs).'</Gather>';
     }
 
     private function record(string $action): string
     {
-        return '<Record action="' . e($action) . '" method="POST" maxLength="120" playBeep="true" trim="trim-silence" />';
+        return '<Record action="'.e($action).'" method="POST" maxLength="120" playBeep="true" trim="trim-silence" />';
     }
 
     private function say(string $message): string
     {
-        return '<Say language="fr-BE">' . e($message) . '</Say>';
+        return '<Say language="fr-BE">'.e($message).'</Say>';
     }
 
     private function summaryForStatus(Call $call, string $status, array $metadata): ?string
@@ -282,7 +288,7 @@ class TwilioVoiceWebhookController extends Controller
             'transferred' => 'Transfert humain réussi.',
             'busy', 'no_answer', 'failed' => $this->transferFailureSummary(data_get($metadata, 'transfer_failure_status', $status)),
             'voicemail_prompted' => ($metadata['fallback_target'] ?? null) === 'voicemail'
-                ? $this->transferFailureSummary(data_get($metadata, 'transfer_failure_status')) . ' Bascule vers messagerie.'
+                ? $this->transferFailureSummary(data_get($metadata, 'transfer_failure_status')).' Bascule vers messagerie.'
                 : ($call->summary ?? 'Messagerie proposée au caller.'),
             default => $call->summary,
         };
@@ -293,7 +299,7 @@ class TwilioVoiceWebhookController extends Controller
         $transferFailureStatus = data_get($call->metadata, 'transfer_failure_status');
 
         if ($transferFailureStatus) {
-            return $this->transferFailureSummary($transferFailureStatus) . ' Message vocal reçu depuis le webhook Twilio.';
+            return $this->transferFailureSummary($transferFailureStatus).' Message vocal reçu depuis le webhook Twilio.';
         }
 
         return 'Message vocal reçu depuis le webhook Twilio.';
@@ -407,9 +413,15 @@ class TwilioVoiceWebhookController extends Controller
 
     private function resolvePhoneNumber(string $phoneNumber): ?PhoneNumber
     {
-        return PhoneNumber::where('phone_number', $phoneNumber)
-            ->orWhere('phone_number', preg_replace('/\s+/', '', $phoneNumber))
-            ->first();
+        return $this->tenantResolver->resolvePhoneNumber($phoneNumber);
+    }
+
+    private function unavailableResponse(): Response
+    {
+        return $this->xmlResponse($this->buildTwiml([
+            '<Say language="fr-BE">Le service est temporairement indisponible. Merci de rappeler plus tard.</Say>',
+            '<Hangup/>',
+        ]));
     }
 
     private function isOpen(AgentConfig $agentConfig): bool

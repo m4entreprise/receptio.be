@@ -38,6 +38,11 @@ class Tenant extends Model
         return $this->hasMany(PhoneNumber::class);
     }
 
+    public function primaryPhoneNumber(): HasOne
+    {
+        return $this->hasOne(PhoneNumber::class)->where('is_primary', true);
+    }
+
     public function users(): HasMany
     {
         return $this->hasMany(User::class);

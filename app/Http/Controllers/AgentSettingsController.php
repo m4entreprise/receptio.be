@@ -5,11 +5,15 @@ namespace App\Http\Controllers;
 use App\Models\AgentConfig;
 use App\Models\PhoneNumber;
 use App\Models\Tenant;
+use App\Support\TenantResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class AgentSettingsController extends Controller
 {
+    public function __construct(private readonly TenantResolver $tenantResolver) {}
+
     public function update(Request $request): RedirectResponse
     {
         $validated = $request->validate([
@@ -40,6 +44,14 @@ class AgentSettingsController extends Controller
             $request->user()->forceFill(['tenant_id' => $tenant->id])->save();
         }
 
+        $normalizedPhoneNumber = $this->tenantResolver->normalizePhoneNumber($validated['phone_number'] ?? null);
+
+        if ($normalizedPhoneNumber && PhoneNumber::where('phone_number', $normalizedPhoneNumber)->where('tenant_id', '!=', $tenant->id)->exists()) {
+            throw ValidationException::withMessages([
+                'phone_number' => 'Ce numéro est déjà rattaché à un autre tenant.',
+            ]);
+        }
+
         $tenant->update([
             'name' => $validated['tenant_name'],
             'slug' => str($validated['tenant_name'])->slug()->toString(),
@@ -60,17 +72,37 @@ class AgentSettingsController extends Controller
             ],
         );
 
-        if (! empty($validated['phone_number'])) {
-            PhoneNumber::updateOrCreate(
-                ['tenant_id' => $tenant->id, 'provider' => 'twilio'],
-                [
-                    'label' => 'Ligne principale',
-                    'phone_number' => $validated['phone_number'],
-                    'is_active' => true,
-                ],
-            );
+        if ($normalizedPhoneNumber) {
+            $this->syncPrimaryPhoneNumber($tenant, $normalizedPhoneNumber);
         }
 
         return back()->with('success', 'Configuration mise à jour.');
+    }
+
+    private function syncPrimaryPhoneNumber(Tenant $tenant, string $phoneNumber): void
+    {
+        $existingForTenant = $tenant->phoneNumbers()->where('phone_number', $phoneNumber)->first();
+        $currentPrimary = $this->tenantResolver->primaryPhoneNumber($tenant);
+
+        $phoneRecord = $existingForTenant ?? $currentPrimary ?? new PhoneNumber([
+            'tenant_id' => $tenant->id,
+            'provider' => 'twilio',
+        ]);
+
+        $phoneRecord->fill([
+            'tenant_id' => $tenant->id,
+            'provider' => 'twilio',
+            'label' => 'Ligne principale',
+            'phone_number' => $phoneNumber,
+            'is_active' => true,
+            'is_primary' => true,
+        ]);
+
+        $phoneRecord->save();
+
+        $tenant->phoneNumbers()
+            ->whereKeyNot($phoneRecord->id)
+            ->where('is_primary', true)
+            ->update(['is_primary' => false]);
     }
 }

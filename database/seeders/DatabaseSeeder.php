@@ -49,6 +49,7 @@ class DatabaseSeeder extends Seeder
                 'provider' => 'twilio',
                 'label' => 'Ligne principale',
                 'is_active' => true,
+                'is_primary' => true,
             ],
         );
 

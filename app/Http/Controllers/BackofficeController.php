@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Call;
 use App\Models\CallMessage;
 use App\Models\Tenant;
+use App\Support\TenantResolver;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -14,6 +15,8 @@ use Inertia\Response;
 
 class BackofficeController extends Controller
 {
+    public function __construct(private readonly TenantResolver $tenantResolver) {}
+
     private const OPEN_MESSAGE_STATUSES = [
         CallMessage::STATUS_NEW,
         CallMessage::STATUS_IN_PROGRESS,
@@ -306,6 +309,7 @@ class BackofficeController extends Controller
     {
         $tenant = $this->resolveDashboardTenant($request);
         $agentConfig = $tenant?->agentConfig;
+        $primaryPhoneNumber = $this->tenantResolver->primaryPhoneNumber($tenant);
 
         $calls = $tenant
             ? $tenant->calls()->with(['message.assignedTo', 'message.handledBy', 'phoneNumber'])->orderByDesc('started_at')->orderByDesc('id')->take(25)->get()->map(fn (Call $call) => $this->mapCall($call))->values()->all()
@@ -323,6 +327,7 @@ class BackofficeController extends Controller
                 'provider' => strtoupper($phoneNumber->provider),
                 'status' => $phoneNumber->is_active ? 'Actif' : 'Inactif',
                 'tone' => $phoneNumber->is_active ? 'success' : 'neutral',
+                'is_primary' => $phoneNumber->is_primary,
             ])->values()->all()
             : [];
 
@@ -336,7 +341,7 @@ class BackofficeController extends Controller
             'opens_at' => $agentConfig?->opens_at ? substr($agentConfig->opens_at, 0, 5) : null,
             'closes_at' => $agentConfig?->closes_at ? substr($agentConfig->closes_at, 0, 5) : null,
             'business_days' => $agentConfig?->business_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
-            'phone_number' => $numbers[0]['phone_number'] ?? '',
+            'phone_number' => $primaryPhoneNumber?->phone_number ?? '',
         ];
 
         $checks = [
@@ -424,8 +429,7 @@ class BackofficeController extends Controller
 
     private function resolveDashboardTenant(Request $request): ?Tenant
     {
-        return $request->user()->tenant()->with(['agentConfig', 'phoneNumbers'])->first()
-            ?? Tenant::with(['agentConfig', 'phoneNumbers'])->first();
+        return $this->tenantResolver->forUser($request->user(), ['agentConfig', 'phoneNumbers']);
     }
 
     private function applyCallFilters(Builder $query, Request $request): Builder

@@ -3,21 +3,22 @@
 namespace App\Http\Controllers;
 
 use App\Models\CallMessage;
-use App\Models\Tenant;
+use App\Support\TenantResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class BackofficeMessageController extends Controller
 {
+    public function __construct(private readonly TenantResolver $tenantResolver) {}
+
     public function update(Request $request, int $messageId): RedirectResponse
     {
         $validated = $request->validate([
             'status' => ['required', Rule::in(CallMessage::workflowStatuses())],
         ]);
 
-        $tenant = $request->user()->tenant()->first()
-            ?? Tenant::first();
+        $tenant = $this->tenantResolver->forUser($request->user());
 
         abort_unless($tenant, 404);
 
