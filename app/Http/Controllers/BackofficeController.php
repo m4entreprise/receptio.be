@@ -468,6 +468,21 @@ class BackofficeController extends Controller
         $durationSeconds = data_get($call->metadata, 'call_duration_seconds')
             ?? data_get($call->metadata, 'dial_call_duration_seconds')
             ?? ($call->started_at && $call->ended_at ? $call->started_at->diffInSeconds($call->ended_at) : null);
+        $recentStatusEvents = collect(data_get($call->metadata, 'status_events', []))
+            ->filter(fn ($event) => is_array($event))
+            ->take(-3)
+            ->values()
+            ->map(fn (array $event) => [
+                'received_at' => data_get($event, 'received_at'),
+                'call_status' => data_get($event, 'call_status'),
+                'call_duration_seconds' => is_numeric(data_get($event, 'call_duration_seconds')) ? (int) data_get($event, 'call_duration_seconds') : null,
+                'dial_call_status' => data_get($event, 'dial_call_status'),
+                'dial_call_duration_seconds' => is_numeric(data_get($event, 'dial_call_duration_seconds')) ? (int) data_get($event, 'dial_call_duration_seconds') : null,
+                'dial_call_sid' => data_get($event, 'dial_call_sid'),
+                'callback_source' => data_get($event, 'callback_source'),
+                'sequence_number' => data_get($event, 'sequence_number'),
+            ])
+            ->all();
 
         return [
             'id' => $call->id,
@@ -483,6 +498,9 @@ class BackofficeController extends Controller
             'ended_at' => $call->ended_at?->toIso8601String(),
             'duration_seconds' => is_numeric($durationSeconds) ? (int) $durationSeconds : null,
             'summary' => $call->summary,
+            'transfer_failure_status' => data_get($call->metadata, 'transfer_failure_status'),
+            'fallback_target' => data_get($call->metadata, 'fallback_target'),
+            'recent_status_events' => $recentStatusEvents,
             'message' => $call->message ? [
                 'caller_name' => $call->message->caller_name,
                 'caller_number' => $call->message->caller_number,

@@ -221,6 +221,14 @@ Le webhook entrant dit qu'un appel a commencé, mais pas toujours comment il s'e
 - le caller peut toujours laisser un message
 - le dashboard montre que le transfert a échoué avant fallback
 
+### État d'avancement
+
+- **implémenté côté application Laravel**
+- fallback automatique vers messagerie sur `busy`, `no-answer`, `failed` et `canceled`
+- stockage de `transfer_failure_status`, `transfer_failed_at` et `fallback_target` dans `metadata`
+- résumé métier enrichi pour tracer l'échec de transfert avant bascule vers messagerie
+- restitution de la cause d'échec dans la liste des appels du dashboard
+
 ---
 
 ## Étape 1.4 — Rendre les webhooks plus observables
@@ -240,6 +248,14 @@ Pouvoir comprendre rapidement ce qui s'est passé sans lire la base à la main.
 - un incident webhook peut être diagnostiqué rapidement
 - un 403 de signature est identifiable
 - un 500 applicatif est retraçable
+
+### État d'avancement
+
+- **observabilité principale implémentée**
+- journalisation structurée des étapes critiques sur `incoming`, `menu`, `status`, `recording` et `ping`
+- journalisation des rejets de signature Twilio et du token manquant dans le middleware
+- exposition des derniers événements `status` Twilio dans les données de la page appels
+- restitution compacte des derniers événements Twilio dans le dashboard `Appels`
 
 ---
 
@@ -634,24 +650,24 @@ Le produit peut être considéré comme solide quand :
 
 ## Étape suivante concrète
 
-Terminer et valider :
+Implémenter :
 
-- configuration Twilio des status callbacks sur le numéro actif
-- test d'appel réel avec validation du statut final
-- vérification du comportement sur transfert réussi, occupé et sans réponse
+- journalisation des étapes critiques des webhooks Twilio
+- journalisation des rejets de signature Twilio
+- affichage des derniers événements Twilio utiles dans le dashboard
 
 ## Ensuite
 
 Implémenter :
 
-- fallback messagerie sur échec de transfert
-- enregistrement explicite de la cause d'échec dans les métadonnées
-- restitution de cet échec avant fallback dans le dashboard
+- boîte de traitement des messages
+- détail appel
+- durcissement multi-tenant
 
 ## Une fois cela terminé
 
 Enchaîner sur :
 
-- boîte de traitement des messages
-- détail appel
-- durcissement multi-tenant
+- durcissement multi-tenant avancé
+- préparation des métriques d'exploitation
+- revue de production Twilio

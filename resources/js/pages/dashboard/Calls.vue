@@ -115,9 +115,30 @@ defineProps<Props>();
                                 </div>
                                 <div class="space-y-2 text-sm text-muted-foreground">
                                     <p>{{ call.summary ?? 'Aucun résumé disponible.' }}</p>
+                                    <p
+                                        v-if="call.transfer_failure_status && call.fallback_target === 'voicemail'"
+                                        class="rounded-2xl border border-warning/30 bg-warning/5 px-3 py-2 text-xs"
+                                    >
+                                        Échec de transfert: {{ call.transfer_failure_status }}. Bascule vers messagerie.
+                                    </p>
                                     <p v-if="call.message" class="rounded-2xl bg-muted/30 px-3 py-2 text-xs">
                                         Message: {{ call.message.message_text ?? 'Enregistrement vocal disponible.' }}
                                     </p>
+                                    <div v-if="call.recent_status_events.length > 0" class="rounded-2xl border border-border/60 bg-muted/20 px-3 py-3 text-xs">
+                                        <p class="mb-2 font-medium text-foreground">Derniers événements Twilio</p>
+                                        <div class="space-y-2">
+                                            <div v-for="(event, index) in call.recent_status_events" :key="`${call.id}-${index}`" class="rounded-xl bg-background/70 px-3 py-2">
+                                                <p>
+                                                    {{ event.received_at ? new Date(event.received_at).toLocaleString('fr-BE') : 'Horodatage inconnu' }}
+                                                </p>
+                                                <p>
+                                                    Call: {{ event.call_status ?? 'n/a' }}
+                                                    <span v-if="event.dial_call_status"> · Dial: {{ event.dial_call_status }}</span>
+                                                    <span v-if="event.callback_source"> · Source: {{ event.callback_source }}</span>
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>

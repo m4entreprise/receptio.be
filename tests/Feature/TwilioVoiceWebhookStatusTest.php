@@ -115,3 +115,81 @@ test('calls dashboard uses final twilio status and duration metadata', function 
         ->where('calls.0.summary', 'Transfert réussi vers la ligne humaine.')
     );
 });
+
+test('twilio status callback falls back to voicemail when transfer is busy', function () {
+    [$tenant, $phoneNumber] = createTwilioWorkspace();
+
+    $call = Call::create([
+        'tenant_id' => $tenant->id,
+        'phone_number_id' => $phoneNumber->id,
+        'external_sid' => 'CA_TRANSFER_BUSY',
+        'direction' => 'inbound',
+        'status' => 'transferring',
+        'from_number' => '+32470001111',
+        'to_number' => '+3220000000',
+        'started_at' => now()->subSeconds(40),
+    ]);
+
+    $response = $this->post(route('webhooks.twilio.voice.status'), [
+        'CallSid' => 'CA_TRANSFER_BUSY',
+        'DialCallStatus' => 'busy',
+        'DialCallDuration' => '0',
+        'DialCallSid' => 'CA_TRANSFER_BUSY_CHILD',
+        'CallStatus' => 'in-progress',
+    ]);
+
+    $response->assertOk();
+    $response->assertHeader('Content-Type', 'text/xml');
+    $response->assertSee('Merci de laisser un message après le bip.', false);
+
+    $call->refresh();
+
+    expect($call->status)->toBe('voicemail_prompted')
+        ->and($call->ended_at)->toBeNull()
+        ->and(data_get($call->metadata, 'transfer_failure_status'))->toBe('busy')
+        ->and(data_get($call->metadata, 'fallback_target'))->toBe('voicemail')
+        ->and($call->summary)->toContain('ligne occupée')
+        ->and($call->summary)->toContain('Bascule vers messagerie');
+});
+
+test('calls dashboard exposes transfer failure metadata after voicemail fallback', function () {
+    [$tenant, $phoneNumber, $user] = createTwilioWorkspace();
+
+    Call::create([
+        'tenant_id' => $tenant->id,
+        'phone_number_id' => $phoneNumber->id,
+        'external_sid' => 'CA_FALLBACK_DASHBOARD',
+        'direction' => 'inbound',
+        'status' => 'voicemail_prompted',
+        'from_number' => '+32479990000',
+        'to_number' => '+3220000000',
+        'started_at' => now()->subMinute(),
+        'summary' => 'Transfert humain échoué : pas de réponse. Bascule vers messagerie.',
+        'metadata' => [
+            'transfer_failure_status' => 'no-answer',
+            'fallback_target' => 'voicemail',
+            'call_duration_seconds' => 21,
+            'status_events' => [
+                [
+                    'received_at' => now()->subSeconds(15)->toIso8601String(),
+                    'call_status' => 'in-progress',
+                    'dial_call_status' => 'no-answer',
+                    'callback_source' => 'call-progress-events',
+                ],
+            ],
+        ],
+    ]);
+
+    $response = $this->actingAs($user)->get(route('dashboard.calls'));
+
+    $response->assertOk();
+    $response->assertInertia(fn (Assert $page) => $page
+        ->component('dashboard/Calls', false)
+        ->where('calls.0.status', 'voicemail_prompted')
+        ->where('calls.0.transfer_failure_status', 'no-answer')
+        ->where('calls.0.fallback_target', 'voicemail')
+        ->where('calls.0.duration_seconds', 21)
+        ->where('calls.0.recent_status_events.0.dial_call_status', 'no-answer')
+        ->where('calls.0.recent_status_events.0.callback_source', 'call-progress-events')
+    );
+});

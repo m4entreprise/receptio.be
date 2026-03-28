@@ -30,6 +30,17 @@ export interface CallMessage {
     recording_url: string | null;
 }
 
+export interface CallStatusEvent {
+    received_at: string | null;
+    call_status: string | null;
+    call_duration_seconds: number | null;
+    dial_call_status: string | null;
+    dial_call_duration_seconds: number | null;
+    dial_call_sid: string | null;
+    callback_source: string | null;
+    sequence_number: string | number | null;
+}
+
 export interface CallItem {
     id: number;
     external_sid: string | null;
@@ -44,6 +55,9 @@ export interface CallItem {
     ended_at: string | null;
     duration_seconds: number | null;
     summary: string | null;
+    transfer_failure_status: string | null;
+    fallback_target: string | null;
+    recent_status_events: CallStatusEvent[];
     message: CallMessage | null;
 }
 
