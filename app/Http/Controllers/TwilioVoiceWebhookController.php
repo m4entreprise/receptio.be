@@ -161,12 +161,14 @@ class TwilioVoiceWebhookController extends Controller
         $call = Call::where('external_sid', $request->string('CallSid')->toString())->first();
 
         if ($call) {
+            $recordingUrl = $this->normalizedRecordingMediaUrl($request->string('RecordingUrl')->toString());
+
             $message = CallMessage::updateOrCreate(
                 ['call_id' => $call->id],
                 [
                     'tenant_id' => $call->tenant_id,
                     'caller_number' => $request->string('From')->toString() ?: $call->from_number,
-                    'recording_url' => $request->string('RecordingUrl')->toString(),
+                    'recording_url' => $recordingUrl,
                     'recording_duration' => $request->integer('RecordingDuration') ?: null,
                     'message_text' => 'Message vocal reçu.',
                     'transcription_status' => CallMessage::TRANSCRIPTION_STATUS_PENDING,
@@ -186,7 +188,8 @@ class TwilioVoiceWebhookController extends Controller
                 'ended_at' => now(),
                 'summary' => $this->voicemailSummary($call),
                 'metadata' => $this->mergeMetadata($call, $this->filterNullValues([
-                    'recording_url' => $request->string('RecordingUrl')->toString() ?: null,
+                    'recording_url' => $recordingUrl ?: null,
+                    'recording_source_url' => $request->string('RecordingUrl')->toString() ?: null,
                     'recording_duration_seconds' => $this->requestInteger($request, 'RecordingDuration'),
                 ])),
             ]);
@@ -539,5 +542,18 @@ class TwilioVoiceWebhookController extends Controller
     private function xmlResponse(string $content): Response
     {
         return response($content, 200, ['Content-Type' => 'text/xml']);
+    }
+
+    private function normalizedRecordingMediaUrl(string $recordingUrl): ?string
+    {
+        if ($recordingUrl === '') {
+            return null;
+        }
+
+        if (preg_match('/\.(mp3|wav)$/i', $recordingUrl)) {
+            return $recordingUrl;
+        }
+
+        return $recordingUrl.'.mp3';
     }
 }

@@ -205,12 +205,12 @@ test('openai insight generator uses separate transcription and text models', fun
         'caller_name' => 'Client openai',
         'caller_number' => '+32470007070',
         'message_text' => 'Message vocal reçu.',
-        'recording_url' => 'https://example.test/openai-recording.mp3',
+        'recording_url' => 'https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE123',
         'transcription_status' => CallMessage::TRANSCRIPTION_STATUS_PENDING,
     ]);
 
     Http::fake([
-        'https://example.test/openai-recording.mp3' => Http::response('fake audio', 200),
+        'https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE123.mp3' => Http::response('fake audio', 200),
         'https://api.openai.com/v1/audio/transcriptions' => Http::response([
             'text' => 'Bonjour, je souhaite un devis rapidement pour demain.',
         ], 200),
@@ -248,4 +248,6 @@ test('openai insight generator uses separate transcription and text models', fun
 
     Http::assertSent(fn ($request) => $request->url() === 'https://api.openai.com/v1/chat/completions'
         && $request['model'] === 'gpt-5.4-mini');
+
+    Http::assertSent(fn ($request) => $request->url() === 'https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE123.mp3');
 });

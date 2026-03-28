@@ -5,6 +5,7 @@ namespace App\Support\VoicemailInsights;
 use App\Models\Call;
 use App\Models\CallMessage;
 use Illuminate\Http\Client\Factory as HttpFactory;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -205,9 +206,15 @@ class OpenAiVoicemailInsightGenerator implements GeneratesVoicemailInsights
             return null;
         }
 
-        $response = $this->http->timeout(30)->get($recordingUrl);
+        $normalizedUrl = $this->normalizedRecordingMediaUrl($recordingUrl);
+        $response = $this->recordingRequest($normalizedUrl)->get($normalizedUrl);
 
         if (! $response->successful()) {
+            Log::warning('voicemail.recording_download_failed', [
+                'recording_url' => $normalizedUrl,
+                'status' => $response->status(),
+            ]);
+
             return null;
         }
 
@@ -220,6 +227,32 @@ class OpenAiVoicemailInsightGenerator implements GeneratesVoicemailInsights
         file_put_contents($path, $response->body());
 
         return $path;
+    }
+
+    private function recordingRequest(string $recordingUrl): PendingRequest
+    {
+        $request = $this->http->timeout(30);
+        $host = parse_url($recordingUrl, PHP_URL_HOST);
+
+        if (is_string($host) && str_contains($host, 'twilio.com')) {
+            $accountSid = config('services.twilio.account_sid');
+            $authToken = config('services.twilio.auth_token');
+
+            if ($accountSid && $authToken) {
+                $request = $request->withBasicAuth($accountSid, $authToken);
+            }
+        }
+
+        return $request;
+    }
+
+    private function normalizedRecordingMediaUrl(string $recordingUrl): string
+    {
+        if (preg_match('/\.(mp3|wav)$/i', $recordingUrl)) {
+            return $recordingUrl;
+        }
+
+        return $recordingUrl.'.mp3';
     }
 
     private function providerLabel(): string
