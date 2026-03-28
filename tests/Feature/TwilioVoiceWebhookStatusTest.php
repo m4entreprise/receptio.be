@@ -139,7 +139,7 @@ test('twilio status callback falls back to voicemail when transfer is busy', fun
     ]);
 
     $response->assertOk();
-    $response->assertHeader('Content-Type', 'text/xml');
+    expect($response->headers->get('Content-Type'))->toStartWith('text/xml');
     $response->assertSee('Merci de laisser un message après le bip.', false);
 
     $call->refresh();

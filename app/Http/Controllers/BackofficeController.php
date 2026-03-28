@@ -7,6 +7,7 @@ use App\Models\CallMessage;
 use App\Models\Tenant;
 use App\Support\TenantResolver;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Str;
@@ -432,7 +433,7 @@ class BackofficeController extends Controller
         return $this->tenantResolver->forUser($request->user(), ['agentConfig', 'phoneNumbers']);
     }
 
-    private function applyCallFilters(Builder $query, Request $request): Builder
+    private function applyCallFilters(Builder|Relation $query, Request $request): Builder|Relation
     {
         $status = $request->string('status')->toString();
         $search = trim($request->string('search')->toString());
@@ -464,7 +465,7 @@ class BackofficeController extends Controller
         return $query->orderByDesc('started_at')->orderByDesc('id');
     }
 
-    private function applyMessageFilters(Builder $query, Request $request): Builder
+    private function applyMessageFilters(Builder|Relation $query, Request $request): Builder|Relation
     {
         $status = $request->string('status')->toString();
         $search = trim($request->string('search')->toString());

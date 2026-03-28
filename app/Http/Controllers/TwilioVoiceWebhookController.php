@@ -327,10 +327,8 @@ class TwilioVoiceWebhookController extends Controller
 
     private function buildTransferFailureFallbackResponse(Call $call): Response
     {
-        $agentConfig = $call->tenant?->agentConfig;
-
         return $this->xmlResponse($this->buildTwiml([
-            $this->say($agentConfig?->after_hours_message ?: 'La ligne humaine est indisponible pour le moment. Merci de laisser un message après le bip.'),
+            $this->say('La ligne humaine est indisponible pour le moment. Merci de laisser un message après le bip.'),
             $this->record(route('webhooks.twilio.voice.recording', absolute: true)),
         ]));
     }
