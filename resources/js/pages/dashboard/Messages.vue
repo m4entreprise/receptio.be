@@ -238,7 +238,7 @@ const updateStatus = (messageId: number, status: string) => {
                                 <div class="mt-4 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
                                     <div class="space-y-3 rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
                                         <p class="leading-6">{{ message.excerpt }}</p>
-                                        <audio v-if="message.recording_url" :src="message.recording_url" controls class="w-full" preload="none" />
+                                        <audio v-if="message.recording_playback_url" :src="message.recording_playback_url" controls class="w-full" preload="none" />
                                         <p v-else class="text-xs">Aucun enregistrement audio disponible.</p>
                                     </div>
                                     <div class="space-y-3 rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">

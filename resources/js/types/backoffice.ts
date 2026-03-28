@@ -57,6 +57,7 @@ export interface CallMessage {
     caller_number: string | null;
     message_text: string | null;
     recording_url: string | null;
+    recording_playback_url: string | null;
     recording_duration: number | null;
     workflow_status: string | null;
     workflow_status_label: string | null;
@@ -119,6 +120,7 @@ export interface InboxMessageItem {
     excerpt: string;
     message_text: string | null;
     recording_url: string | null;
+    recording_playback_url: string | null;
     recording_duration: number | null;
     status: string;
     status_label: string;

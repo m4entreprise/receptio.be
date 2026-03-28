@@ -6,6 +6,7 @@ use App\Models\CallMessage;
 use App\Models\PhoneNumber;
 use App\Models\Tenant;
 use App\Models\User;
+use Illuminate\Support\Facades\Http;
 use Inertia\Testing\AssertableInertia as Assert;
 
 function createTenantWorkspace(string $suffix): array
@@ -217,4 +218,35 @@ test('settings update promotes the chosen tenant number as primary', function ()
 
     expect($secondaryPhoneNumber->fresh()->is_primary)->toBeTrue();
     expect($primaryPhoneNumber->fresh()->is_primary)->toBeFalse();
+});
+
+test('recording proxy cannot be accessed across tenants', function () {
+    ['tenant' => $tenantA, 'phoneNumber' => $phoneA, 'user' => $userA] = createTenantWorkspace('61');
+    ['tenant' => $tenantB, 'phoneNumber' => $phoneB] = createTenantWorkspace('62');
+
+    $foreignCall = Call::create([
+        'tenant_id' => $tenantB->id,
+        'phone_number_id' => $phoneB->id,
+        'status' => 'voicemail_received',
+        'from_number' => '+32470000622',
+        'to_number' => $phoneB->phone_number,
+    ]);
+
+    $foreignMessage = CallMessage::create([
+        'tenant_id' => $tenantB->id,
+        'call_id' => $foreignCall->id,
+        'status' => CallMessage::STATUS_NEW,
+        'caller_name' => 'Client B',
+        'caller_number' => '+32470000622',
+        'message_text' => 'Audio prive.',
+        'recording_url' => 'https://api.twilio.com/2010-04-01/Accounts/AC999/Recordings/RE999.mp3',
+    ]);
+
+    Http::fake();
+
+    $this->actingAs($userA)
+        ->get(route('dashboard.messages.recording', $foreignMessage->id))
+        ->assertNotFound();
+
+    Http::assertNothingSent();
 });

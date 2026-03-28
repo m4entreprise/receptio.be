@@ -5,6 +5,7 @@ use App\Models\CallMessage;
 use App\Models\PhoneNumber;
 use App\Models\Tenant;
 use App\Models\User;
+use Illuminate\Support\Facades\Http;
 use Inertia\Testing\AssertableInertia as Assert;
 
 function backofficeTenantContext(): array
@@ -154,4 +155,42 @@ test('messages page filters the inbox by workflow status', function () {
             ->has('messages', 1)
             ->where('messages.0.id', $newMessage->id)
             ->where('appliedFilters.status', CallMessage::STATUS_NEW));
+});
+
+test('an authenticated user can stream a voicemail recording through the dashboard proxy', function () {
+    ['tenant' => $tenant, 'user' => $user, 'phoneNumber' => $phoneNumber] = backofficeTenantContext();
+
+    $call = Call::create([
+        'tenant_id' => $tenant->id,
+        'phone_number_id' => $phoneNumber->id,
+        'status' => 'voicemail_received',
+        'from_number' => '+32470000005',
+        'to_number' => $phoneNumber->phone_number,
+    ]);
+
+    $message = CallMessage::create([
+        'tenant_id' => $tenant->id,
+        'call_id' => $call->id,
+        'status' => CallMessage::STATUS_NEW,
+        'caller_name' => 'Audio Proxy',
+        'caller_number' => '+32470000005',
+        'message_text' => 'Lecture audio.',
+        'recording_url' => 'https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE123',
+    ]);
+
+    Http::fake([
+        'https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE123.mp3' => Http::response('fake-mp3-audio', 200, [
+            'Content-Type' => 'audio/mpeg',
+            'Content-Length' => '14',
+        ]),
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('dashboard.messages.recording', $message->id))
+        ->assertOk()
+        ->assertHeader('content-type', 'audio/mpeg')
+        ->assertHeader('cache-control', 'max-age=300, private')
+        ->assertSee('fake-mp3-audio', false);
+
+    Http::assertSent(fn ($request) => $request->url() === 'https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE123.mp3');
 });
