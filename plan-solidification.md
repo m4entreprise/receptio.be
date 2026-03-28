@@ -84,19 +84,19 @@ La suite consiste a transformer ce socle en produit robuste.
 
 - phase 1 implementee cote Laravel et dashboard
 - phase 2 implementee cote Laravel et dashboard
-- phase 3 engagee cote code avec suppression des fallbacks globaux dangereux, debut d'isolation tenant et notion de numero principal
+- phase 3 validee cote code et tests
+- phase 4 engagee cote code avec workflow de rappel, notifications email enrichies et journal d'activite
 
 ### Ce qui reste a valider ou terminer
 
-- appliquer les migrations recentes en environnement local/staging/prod
 - configurer Twilio dans la console pour les status callbacks
-- remettre l'environnement de tests en etat d'execution avec le driver SQLite/PDO
-- finir le durcissement multi-tenant avant de considerer la phase 3 comme terminee
+- appliquer les migrations recentes en environnement local/staging/prod
+- valider la recette Twilio reelle en environnement public
 
 ### Point de vigilance
 
-- la base de code a avance plus vite que la validation d'environnement
-- plusieurs briques sont implementees mais pas encore toutes verifiees par une suite de tests executable localement
+- la base de code avance plus vite que la recette terrain Twilio
+- les briques critiques sont maintenant couvertes par des tests executables, mais la validation production reste a faire
 
 ---
 
@@ -360,36 +360,43 @@ Faire de Receptio un outil de gestion de demandes, pas seulement un repondeur.
 
 ## Etat de phase
 
-- **non commencee**
+- **en cours**
+- **socle implemente et verifie**
 
 ## Etape 4.1 - Workflow de rappel
 
-### Travail a faire
+### Etat d'avancement
 
-- ajouter une action `rappeler plus tard`
-- ajouter un champ `callback_due_at`
-- permettre d'assigner un message a un utilisateur
+- **implemente cote application**
+- action `rappeler plus tard` disponible dans l'inbox
+- champ `callback_due_at` ajoute sur `call_messages`
+- assignation d'un message a un utilisateur du tenant disponible
+- statuts et rappels journalises dans l'activite
 
 ## Etape 4.2 - Notifications plus propres
 
-### Travail a faire
+### Etat d'avancement
 
-- remplacer l'email brut par un template plus lisible
-- inclure lien dashboard
-- inclure lien enregistrement
-- inclure tenant, heure, appelant
+- **implemente cote application**
+- l'email brut Twilio est remplace par un vrai template HTML
+- liens vers inbox et fiche appel inclus
+- tenant, appelant, heure et enregistrement inclus
 
 ## Etape 4.3 - Journal d'activite
 
-### Travail a faire
+### Etat d'avancement
 
-- lister les evenements importants :
+- **implemente cote application**
+- evenements traces :
   - appel recu
   - transfert tente
   - transfert echoue
   - message recu
   - email envoye
-- fournir une chronologie claire
+  - assignation
+  - rappel planifie
+  - changement de statut
+- chronologie visible dans la vue d'ensemble et sur la fiche appel
 
 ---
 
@@ -515,25 +522,25 @@ Passer d'un produit qui fonctionne a un produit que l'on peut vendre sereinement
 
 - phase 1 : solide cote application
 - phase 2 : solide cote application
-- phase 3 : bien avancee cote code
+- phase 3 : validee cote code et tests
+- phase 4 : engagee et verifiee cote code
 
 ### Pas encore termine
 
-- migration et verification terrain de la phase 3
 - configuration Twilio dans la console
-- execution complete des tests Laravel
+- application des migrations phase 4
+- verification terrain Twilio des nouveaux flux
 
 ### Prochaine etape recommandee
 
-Terminer la phase 3 avant d'ouvrir la phase 4 :
+Finaliser la mise en production de la phase 4 :
 
 - appliquer les migrations recentes
-- corriger l'environnement PHP de test
-- executer la suite de tests d'isolation
 - verifier les cas reels Twilio avec numeros connus et inconnus
+- confirmer le rendu des emails en environnement reel
 
 Une fois cela valide, enchainer sur :
 
-- workflow de rappel
-- notifications email ameliorees
-- journal d'activite
+- transcription
+- resume automatique
+- premieres automatisations IA

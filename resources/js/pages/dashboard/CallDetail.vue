@@ -5,7 +5,7 @@ import ToneBadge from '@/components/dashboard/ToneBadge.vue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import AppLayout from '@/layouts/AppLayout.vue';
-import type { CallDetailItem, ServiceStatus, TenantSummary, WorkspaceSummary } from '@/types/backoffice';
+import type { ActivityItem, CallDetailItem, ServiceStatus, TenantSummary, WorkspaceSummary } from '@/types/backoffice';
 import { Head, Link } from '@inertiajs/vue3';
 
 const breadcrumbs = [
@@ -23,6 +23,7 @@ interface Props {
         description: string;
     };
     call: CallDetailItem;
+    activityFeed: ActivityItem[];
 }
 
 defineProps<Props>();
@@ -135,6 +136,9 @@ defineProps<Props>();
                             <p v-if="call.message.handled_at" class="mt-1">
                                 Traité le: {{ new Date(call.message.handled_at).toLocaleString('fr-BE') }}
                             </p>
+                            <p v-if="call.message.callback_due_at" class="mt-1">
+                                Rappel prevu le: {{ new Date(call.message.callback_due_at).toLocaleString('fr-BE') }}
+                            </p>
                         </div>
                         <Button as-child variant="outline" size="sm">
                             <Link :href="route('dashboard.messages')">Ouvrir l’inbox</Link>
@@ -145,6 +149,29 @@ defineProps<Props>();
                     </CardContent>
                 </Card>
             </div>
+
+            <Card class="border-border/70 bg-background/95 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.32)]">
+                <CardHeader>
+                    <CardDescription>Journal</CardDescription>
+                    <CardTitle>Activite liee a cet appel</CardTitle>
+                </CardHeader>
+                <CardContent class="space-y-3">
+                    <div v-if="activityFeed.length === 0" class="rounded-2xl border border-border/60 px-4 py-4 text-sm text-muted-foreground">
+                        Aucun evenement metier rattache a cet appel.
+                    </div>
+                    <div v-for="item in activityFeed" :key="item.id" class="rounded-2xl border border-border/60 px-4 py-4">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <p class="text-sm font-medium">{{ item.title }}</p>
+                            <ToneBadge :label="item.tone === 'warning' ? 'Attention' : 'Journal'" :tone="item.tone" />
+                        </div>
+                        <p v-if="item.description" class="mt-2 text-sm leading-6 text-muted-foreground">{{ item.description }}</p>
+                        <p class="mt-2 text-xs text-muted-foreground">
+                            {{ item.happened_at ? new Date(item.happened_at).toLocaleString('fr-BE') : 'Horodatage inconnu' }}
+                            <span v-if="item.user_name"> · {{ item.user_name }}</span>
+                        </p>
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     </AppLayout>
 </template>

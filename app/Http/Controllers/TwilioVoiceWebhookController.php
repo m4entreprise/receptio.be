@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Mail\VoicemailReceivedMail;
 use App\Models\AgentConfig;
 use App\Models\Call;
 use App\Models\CallMessage;
 use App\Models\PhoneNumber;
+use App\Support\ActivityLogger;
 use App\Support\TenantResolver;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -14,7 +16,10 @@ use Illuminate\Support\Facades\Mail;
 
 class TwilioVoiceWebhookController extends Controller
 {
-    public function __construct(private readonly TenantResolver $tenantResolver) {}
+    public function __construct(
+        private readonly TenantResolver $tenantResolver,
+        private readonly ActivityLogger $activityLogger,
+    ) {}
 
     public function incoming(Request $request): Response
     {
@@ -43,6 +48,21 @@ class TwilioVoiceWebhookController extends Controller
                 'metadata' => $request->all(),
             ],
         );
+
+        if ($call->wasRecentlyCreated) {
+            $this->activityLogger->log(
+                tenant: $tenant,
+                eventType: 'call_received',
+                title: 'Appel recu',
+                description: 'Un nouvel appel entrant a ete enregistre sur la ligne '.$phoneNumber->phone_number.'.',
+                call: $call,
+                metadata: [
+                    'from_number' => $call->from_number,
+                    'to_number' => $call->to_number,
+                    'phone_number_id' => $phoneNumber->id,
+                ],
+            );
+        }
 
         Log::info('twilio.webhook.incoming_received', $this->webhookContext($request, $call, [
             'resolved_phone_number_id' => $phoneNumber?->id,
@@ -106,6 +126,17 @@ class TwilioVoiceWebhookController extends Controller
         if ($request->string('Digits')->toString() === '1' && filled($agentConfig?->transfer_phone_number)) {
             $call->update(['status' => 'transferring']);
 
+            $this->activityLogger->log(
+                tenant: $tenant,
+                eventType: 'transfer_attempted',
+                title: 'Transfert tente',
+                description: 'Le caller a demande un transfert vers la ligne humaine.',
+                call: $call,
+                metadata: [
+                    'transfer_phone_number' => $agentConfig->transfer_phone_number,
+                ],
+            );
+
             Log::info('twilio.webhook.menu_transfer_selected', $this->webhookContext($request, $call));
 
             return $this->xmlResponse($this->buildTwiml([
@@ -129,7 +160,7 @@ class TwilioVoiceWebhookController extends Controller
         $call = Call::where('external_sid', $request->string('CallSid')->toString())->first();
 
         if ($call) {
-            CallMessage::updateOrCreate(
+            $message = CallMessage::updateOrCreate(
                 ['call_id' => $call->id],
                 [
                     'tenant_id' => $call->tenant_id,
@@ -153,10 +184,36 @@ class TwilioVoiceWebhookController extends Controller
 
             $notificationEmail = $call->tenant->agentConfig?->notification_email;
 
+            if ($message->wasRecentlyCreated) {
+                $this->activityLogger->log(
+                    tenant: $call->tenant,
+                    eventType: 'message_received',
+                    title: 'Message vocal recu',
+                    description: 'Un message vocal a ete enregistre et attache a l appel.',
+                    call: $call,
+                    callMessage: $message,
+                    metadata: [
+                        'caller_number' => $message->caller_number,
+                        'recording_duration' => $message->recording_duration,
+                    ],
+                );
+            }
+
             if ($notificationEmail) {
-                Mail::raw(
-                    "Nouveau message vocal pour {$call->tenant->name}.\n\nAppelant: {$call->from_number}\nEnregistrement: {$request->string('RecordingUrl')->toString()}",
-                    fn ($message) => $message->to($notificationEmail)->subject('Receptio - nouveau message vocal'),
+                Mail::to($notificationEmail)->send(
+                    new VoicemailReceivedMail($call->fresh('tenant'), $message),
+                );
+
+                $this->activityLogger->log(
+                    tenant: $call->tenant,
+                    eventType: 'notification_email_sent',
+                    title: 'Notification email envoyee',
+                    description: 'Le message vocal a ete distribue vers '.$notificationEmail.'.',
+                    call: $call,
+                    callMessage: $message,
+                    metadata: [
+                        'notification_email' => $notificationEmail,
+                    ],
                 );
             }
 
@@ -229,6 +286,25 @@ class TwilioVoiceWebhookController extends Controller
                 $metadata['fallback_target'] = 'voicemail';
                 $status = 'voicemail_prompted';
                 $fallbackResponse = $this->buildTransferFailureFallbackResponse($call);
+
+                if (! data_get($call->metadata, 'activity_flags.transfer_failed_logged')) {
+                    $this->activityLogger->log(
+                        tenant: $call->tenant,
+                        eventType: 'transfer_failed',
+                        title: 'Transfert echoue',
+                        description: 'Le transfert humain a echoue et l appel a ete bascule vers la messagerie.',
+                        call: $call,
+                        metadata: [
+                            'dial_call_status' => $dialStatus,
+                            'fallback_target' => 'voicemail',
+                        ],
+                    );
+
+                    $metadata['activity_flags'] = array_merge(
+                        (array) data_get($call->metadata, 'activity_flags', []),
+                        ['transfer_failed_logged' => true],
+                    );
+                }
 
                 Log::warning('twilio.webhook.status_transfer_failed_fallback', $this->webhookContext($request, $call, [
                     'resolved_status' => $status,

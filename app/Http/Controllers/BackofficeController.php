@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\Call;
 use App\Models\CallMessage;
 use App\Models\Tenant;
@@ -55,7 +56,7 @@ class BackofficeController extends Controller
                 'description' => 'Supervise l’activité, la qualité de service et les réglages clés depuis un cockpit centralisé.',
             ],
             'recentCalls' => $recentCalls,
-            'activityFeed' => $activityFeed,
+            'activityFeed' => $context['activityFeed'],
             'alerts' => $context['alerts'],
             'onboarding' => $context['onboarding'],
             'quickActions' => [
@@ -137,6 +138,15 @@ class BackofficeController extends Controller
                 ...$this->mapCall($callRecord),
                 'tenant_name' => $tenant->name,
             ],
+            'activityFeed' => $callRecord->activityLogs()
+                ->with('user')
+                ->orderByDesc('happened_at')
+                ->orderByDesc('id')
+                ->take(10)
+                ->get()
+                ->map(fn (ActivityLog $activityLog) => $this->mapActivityLog($activityLog))
+                ->values()
+                ->all(),
         ]);
     }
 
@@ -166,7 +176,7 @@ class BackofficeController extends Controller
             'inboxStats' => [
                 ['label' => 'À traiter', 'value' => (clone $inboxStatsQuery)->whereIn('status', self::OPEN_MESSAGE_STATUSES)->count(), 'tone' => 'warning'],
                 ['label' => 'Messages visibles', 'value' => (clone $inboxStatsQuery)->count(), 'tone' => 'default'],
-                ['label' => 'Rappelés', 'value' => (clone $inboxStatsQuery)->where('status', CallMessage::STATUS_CALLED_BACK)->count(), 'tone' => 'success'],
+                ['label' => 'Rappels planifies', 'value' => (clone $inboxStatsQuery)->whereNotNull('callback_due_at')->count(), 'tone' => 'info'],
             ],
             'filterOptions' => [
                 'statuses' => $this->messageStatusOptions(),
@@ -177,6 +187,7 @@ class BackofficeController extends Controller
                 'Le rappel humain reste l’action prioritaire quand une demande attend.',
                 'Le traitement suit une lecture claire, priorisée et centralisée.',
             ],
+            'assignees' => $context['assignees'],
             'pagination' => $this->paginationData($messagesPaginator),
         ]);
     }
@@ -320,6 +331,18 @@ class BackofficeController extends Controller
             ? $tenant->callMessages()->with(['call.phoneNumber', 'assignedTo', 'handledBy'])->latest()->take(10)->get()->map(fn (CallMessage $message) => $this->mapMessage($message))->values()->all()
             : [];
 
+        $activityFeed = $tenant
+            ? $tenant->activityLogs()
+                ->with('user')
+                ->orderByDesc('happened_at')
+                ->orderByDesc('id')
+                ->take(8)
+                ->get()
+                ->map(fn (ActivityLog $activityLog) => $this->mapActivityLog($activityLog))
+                ->values()
+                ->all()
+            : [];
+
         $numbers = $tenant
             ? $tenant->phoneNumbers->map(fn ($phoneNumber) => [
                 'id' => $phoneNumber->id,
@@ -412,7 +435,19 @@ class BackofficeController extends Controller
             'settings' => $settings,
             'calls' => $calls,
             'messages' => $messages,
+            'activityFeed' => $activityFeed,
             'numbers' => $numbers,
+            'assignees' => $tenant
+                ? $tenant->users()
+                    ->orderBy('name')
+                    ->get()
+                    ->map(fn ($user) => [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                    ])
+                    ->values()
+                    ->all()
+                : [],
             'alerts' => $alerts,
             'onboarding' => $onboarding,
             'integrations' => $integrations,
@@ -573,9 +608,11 @@ class BackofficeController extends Controller
                 'workflow_status' => $call->message->status,
                 'workflow_status_label' => $this->messageStatusLabel($call->message->status),
                 'workflow_status_tone' => $this->messageStatusTone($call->message->status),
+                'assigned_to_user_id' => $call->message->assigned_to_user_id,
                 'assigned_to_name' => $call->message->assignedTo?->name,
                 'handled_by_name' => $call->message->handledBy?->name,
                 'handled_at' => $call->message->handled_at?->toIso8601String(),
+                'callback_due_at' => $call->message->callback_due_at?->toIso8601String(),
             ] : null,
         ];
     }
@@ -604,9 +641,26 @@ class BackofficeController extends Controller
             'priority' => $priority,
             'created_at' => $message->created_at?->toIso8601String(),
             'summary' => $call?->summary,
+            'assigned_to_user_id' => $message->assigned_to_user_id,
             'assigned_to_name' => $message->assignedTo?->name,
             'handled_by_name' => $message->handledBy?->name,
             'handled_at' => $message->handled_at?->toIso8601String(),
+            'callback_due_at' => $message->callback_due_at?->toIso8601String(),
+        ];
+    }
+
+    private function mapActivityLog(ActivityLog $activityLog): array
+    {
+        return [
+            'id' => $activityLog->id,
+            'event_type' => $activityLog->event_type,
+            'title' => $activityLog->title,
+            'description' => $activityLog->description,
+            'tone' => $this->activityTone($activityLog->event_type),
+            'happened_at' => $activityLog->happened_at?->toIso8601String(),
+            'user_name' => $activityLog->user?->name,
+            'call_id' => $activityLog->call_id,
+            'call_message_id' => $activityLog->call_message_id,
         ];
     }
 
@@ -684,6 +738,16 @@ class BackofficeController extends Controller
             CallMessage::STATUS_IN_PROGRESS => 'info',
             CallMessage::STATUS_CALLED_BACK => 'success',
             CallMessage::STATUS_CLOSED => 'neutral',
+            default => 'default',
+        };
+    }
+
+    private function activityTone(string $eventType): string
+    {
+        return match ($eventType) {
+            'transfer_failed' => 'warning',
+            'notification_email_sent', 'callback_scheduled', 'transfer_attempted', 'message_assigned' => 'info',
+            'message_status_updated' => 'success',
             default => 'default',
         };
     }

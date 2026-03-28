@@ -6,7 +6,7 @@ import ToneBadge from '@/components/dashboard/ToneBadge.vue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import AppLayout from '@/layouts/AppLayout.vue';
-import type { CallItem, IntegrationItem, ServiceStatus, TenantSummary, WorkspaceSummary } from '@/types/backoffice';
+import type { ActivityItem, CallItem, IntegrationItem, ServiceStatus, TenantSummary, WorkspaceSummary } from '@/types/backoffice';
 import { Head, Link } from '@inertiajs/vue3';
 import { ArrowRight, BellRing, Clock3, PhoneCall, ShieldCheck } from 'lucide-vue-next';
 
@@ -21,11 +21,7 @@ interface Props {
         description: string;
     };
     recentCalls: CallItem[];
-    activityFeed: Array<{
-        title: string;
-        value: number | string;
-        description: string;
-    }>;
+    activityFeed: ActivityItem[];
     alerts: Array<{
         title: string;
         description: string;
@@ -144,13 +140,29 @@ const serviceMarkers = [
                             </Button>
                         </CardHeader>
                         <CardContent class="space-y-3">
-                            <div v-for="item in activityFeed" :key="item.title" class="rounded-2xl border border-border/60 px-4 py-4 transition hover:border-primary/20 hover:bg-primary/5">
+                            <div v-if="activityFeed.length === 0" class="rounded-2xl border border-border/60 px-4 py-4 text-sm text-muted-foreground">
+                                Aucun evenement metier recent.
+                            </div>
+                            <div
+                                v-for="item in activityFeed"
+                                :key="item.id"
+                                class="rounded-2xl border border-border/60 px-4 py-4 transition hover:border-primary/20 hover:bg-primary/5"
+                            >
                                 <div class="flex items-start justify-between gap-4">
-                                    <div class="space-y-1">
-                                        <p class="text-sm font-medium">{{ item.title }}</p>
-                                        <p class="text-sm text-muted-foreground">{{ item.description }}</p>
+                                    <div class="space-y-2">
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <p class="text-sm font-medium">{{ item.title }}</p>
+                                            <ToneBadge :label="item.tone === 'warning' ? 'Attention' : 'Journal'" :tone="item.tone" />
+                                        </div>
+                                        <p v-if="item.description" class="text-sm text-muted-foreground">{{ item.description }}</p>
+                                        <div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                                            <span>{{ item.happened_at ? new Date(item.happened_at).toLocaleString('fr-BE') : 'Horodatage inconnu' }}</span>
+                                            <span v-if="item.user_name">Par {{ item.user_name }}</span>
+                                            <Link v-if="item.call_id" :href="route('dashboard.calls.show', item.call_id)" class="font-medium text-foreground">
+                                                Voir l'appel
+                                            </Link>
+                                        </div>
                                     </div>
-                                    <div class="text-2xl font-semibold tracking-tight">{{ item.value }}</div>
                                 </div>
                             </div>
                         </CardContent>

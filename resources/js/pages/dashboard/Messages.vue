@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { type SharedData } from '@/types';
 import type {
+    AssigneeOption,
     AppliedFilters,
     InboxMessageItem,
     PaginationData,
@@ -19,7 +20,7 @@ import type {
     WorkspaceSummary,
 } from '@/types/backoffice';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
-import { reactive, ref } from 'vue';
+import { reactive, ref, watchEffect } from 'vue';
 
 const breadcrumbs = [
     { title: 'Vue d’ensemble', href: '/dashboard' },
@@ -45,6 +46,7 @@ interface Props {
     };
     appliedFilters: AppliedFilters;
     serviceRules: string[];
+    assignees: AssigneeOption[];
     pagination: PaginationData;
 }
 
@@ -60,6 +62,28 @@ const filters = reactive({
 });
 
 const updatingId = ref<number | null>(null);
+const workflowDrafts = reactive(
+    Object.fromEntries(
+        props.messages.map((message) => [
+            message.id,
+            {
+                assigned_to_user_id: message.assigned_to_user_id ? String(message.assigned_to_user_id) : '',
+                callback_due_at: message.callback_due_at ? message.callback_due_at.slice(0, 16) : '',
+            },
+        ]),
+    ) as Record<number, { assigned_to_user_id: string; callback_due_at: string }>,
+);
+
+watchEffect(() => {
+    props.messages.forEach((message) => {
+        if (!workflowDrafts[message.id]) {
+            workflowDrafts[message.id] = {
+                assigned_to_user_id: message.assigned_to_user_id ? String(message.assigned_to_user_id) : '',
+                callback_due_at: message.callback_due_at ? message.callback_due_at.slice(0, 16) : '',
+            };
+        }
+    });
+});
 
 const applyFilters = () => {
     router.get(route('dashboard.messages'), filters, {
@@ -80,9 +104,18 @@ const resetFilters = () => {
 const updateStatus = (messageId: number, status: string) => {
     updatingId.value = messageId;
 
+    const draft = workflowDrafts[messageId] ?? {
+        assigned_to_user_id: '',
+        callback_due_at: '',
+    };
+
     router.patch(
         route('dashboard.messages.update', messageId),
-        { status },
+        {
+            status,
+            assigned_to_user_id: draft.assigned_to_user_id ? Number(draft.assigned_to_user_id) : null,
+            callback_due_at: status === 'in_progress' && draft.callback_due_at ? draft.callback_due_at : null,
+        },
         {
             preserveScroll: true,
             onFinish: () => {
@@ -207,6 +240,26 @@ const updateStatus = (messageId: number, status: string) => {
                                             <p>Assigné à: {{ message.assigned_to_name ?? 'Personne' }}</p>
                                             <p>Traité par: {{ message.handled_by_name ?? 'Pas encore traité' }}</p>
                                             <p v-if="message.handled_at">Traité le: {{ new Date(message.handled_at).toLocaleString('fr-BE') }}</p>
+                                            <p v-if="message.callback_due_at">Rappel prevu: {{ new Date(message.callback_due_at).toLocaleString('fr-BE') }}</p>
+                                        </div>
+                                        <div class="grid gap-3 rounded-2xl border border-border/60 bg-muted/20 p-3">
+                                            <div class="grid gap-2">
+                                                <Label :for="`assignee-${message.id}`">Assigner a</Label>
+                                                <select
+                                                    :id="`assignee-${message.id}`"
+                                                    v-model="workflowDrafts[message.id].assigned_to_user_id"
+                                                    class="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm"
+                                                >
+                                                    <option value="">Personne</option>
+                                                    <option v-for="assignee in assignees" :key="assignee.id" :value="String(assignee.id)">
+                                                        {{ assignee.name }}
+                                                    </option>
+                                                </select>
+                                            </div>
+                                            <div class="grid gap-2">
+                                                <Label :for="`callback-${message.id}`">Rappeler plus tard</Label>
+                                                <Input :id="`callback-${message.id}`" v-model="workflowDrafts[message.id].callback_due_at" type="datetime-local" />
+                                            </div>
                                         </div>
                                         <div class="flex flex-wrap gap-2">
                                             <Button
@@ -216,6 +269,14 @@ const updateStatus = (messageId: number, status: string) => {
                                                 @click="updateStatus(message.id, 'in_progress')"
                                             >
                                                 Prendre en charge
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                :disabled="updatingId === message.id"
+                                                @click="updateStatus(message.id, 'in_progress')"
+                                            >
+                                                Planifier rappel
                                             </Button>
                                             <Button
                                                 variant="outline"

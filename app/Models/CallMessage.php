@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class CallMessage extends Model
 {
@@ -31,6 +32,7 @@ class CallMessage extends Model
         'assigned_to_user_id',
         'handled_by_user_id',
         'handled_at',
+        'callback_due_at',
     ];
 
     protected function casts(): array
@@ -38,6 +40,7 @@ class CallMessage extends Model
         return [
             'notified_at' => 'datetime',
             'handled_at' => 'datetime',
+            'callback_due_at' => 'datetime',
         ];
     }
 
@@ -59,6 +62,11 @@ class CallMessage extends Model
     public function handledBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'handled_by_user_id');
+    }
+
+    public function activityLogs(): HasMany
+    {
+        return $this->hasMany(ActivityLog::class);
     }
 
     public static function workflowStatuses(): array

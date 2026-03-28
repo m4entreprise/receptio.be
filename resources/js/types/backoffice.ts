@@ -40,6 +40,11 @@ export interface SelectOption {
     value: string;
 }
 
+export interface AssigneeOption {
+    id: number;
+    name: string;
+}
+
 export interface AppliedFilters {
     status: string;
     search: string;
@@ -56,9 +61,11 @@ export interface CallMessage {
     workflow_status: string | null;
     workflow_status_label: string | null;
     workflow_status_tone: Tone | null;
+    assigned_to_user_id: number | null;
     assigned_to_name: string | null;
     handled_by_name: string | null;
     handled_at: string | null;
+    callback_due_at: string | null;
 }
 
 export interface CallStatusEvent {
@@ -114,9 +121,23 @@ export interface InboxMessageItem {
     priority: string;
     created_at: string | null;
     summary: string | null;
+    assigned_to_user_id: number | null;
     assigned_to_name: string | null;
     handled_by_name: string | null;
     handled_at: string | null;
+    callback_due_at: string | null;
+}
+
+export interface ActivityItem {
+    id: number;
+    event_type: string;
+    title: string;
+    description: string | null;
+    tone: Tone;
+    happened_at: string | null;
+    user_name: string | null;
+    call_id: number | null;
+    call_message_id: number | null;
 }
 
 export interface IntegrationItem {
