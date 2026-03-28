@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\AgentSettingsController;
 use App\Http\Controllers\BackofficeController;
+use App\Http\Controllers\BackofficeMessageController;
+use App\Http\Controllers\BackofficeRecordingController;
 use App\Http\Controllers\TwilioVoiceWebhookController;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Route;
@@ -14,7 +16,10 @@ Route::get('/', function () {
 Route::middleware(['auth', 'verified'])->prefix('dashboard')->group(function () {
     Route::get('/', [BackofficeController::class, 'overview'])->name('dashboard');
     Route::get('calls', [BackofficeController::class, 'calls'])->name('dashboard.calls');
+    Route::get('calls/{call}', [BackofficeController::class, 'showCall'])->name('dashboard.calls.show');
     Route::get('messages', [BackofficeController::class, 'messages'])->name('dashboard.messages');
+    Route::get('messages/{message}/recording', [BackofficeRecordingController::class, 'show'])->name('dashboard.messages.recording');
+    Route::patch('messages/{message}', [BackofficeMessageController::class, 'update'])->name('dashboard.messages.update');
     Route::get('agent', [BackofficeController::class, 'agent'])->name('dashboard.agent');
     Route::get('numbers', [BackofficeController::class, 'numbers'])->name('dashboard.numbers');
     Route::get('integrations', [BackofficeController::class, 'integrations'])->name('dashboard.integrations');

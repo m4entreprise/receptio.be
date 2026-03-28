@@ -26,6 +26,7 @@ interface Props {
         phone_number: string;
         provider: string;
         status: string;
+        is_primary: boolean;
         tone: 'default' | 'success' | 'warning' | 'info' | 'neutral';
     }>;
     webhooks: {
@@ -90,7 +91,10 @@ const formatDate = (value: string | null) => {
                         <div v-else class="grid gap-4 md:grid-cols-2">
                             <div v-for="number in numbers" :key="number.id" class="rounded-[1.75rem] border border-border/60 bg-background p-5 shadow-[0_12px_36px_-30px_rgba(15,23,42,0.35)]">
                                 <div class="flex items-center justify-between gap-3">
-                                    <p class="text-sm font-medium">{{ number.label }}</p>
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <p class="text-sm font-medium">{{ number.label }}</p>
+                                        <ToneBadge v-if="number.is_primary" label="Principal" tone="info" />
+                                    </div>
                                     <ToneBadge :label="number.status" :tone="number.tone" />
                                 </div>
                                 <p class="mt-3 text-2xl font-semibold tracking-tight">{{ number.phone_number }}</p>

@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessVoicemailInsights;
+use App\Mail\VoicemailReceivedMail;
 use App\Models\AgentConfig;
 use App\Models\Call;
 use App\Models\CallMessage;
 use App\Models\PhoneNumber;
-use App\Models\Tenant;
+use App\Support\ActivityLogger;
+use App\Support\TenantResolver;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
@@ -14,10 +17,15 @@ use Illuminate\Support\Facades\Mail;
 
 class TwilioVoiceWebhookController extends Controller
 {
+    public function __construct(
+        private readonly TenantResolver $tenantResolver,
+        private readonly ActivityLogger $activityLogger,
+    ) {}
+
     public function incoming(Request $request): Response
     {
         $phoneNumber = $this->resolvePhoneNumber($request->string('To')->toString());
-        $tenant = $phoneNumber?->tenant ?? Tenant::with('agentConfig')->first();
+        $tenant = $phoneNumber?->tenant;
         $agentConfig = $tenant?->agentConfig;
 
         if (! $tenant || ! $agentConfig) {
@@ -25,9 +33,7 @@ class TwilioVoiceWebhookController extends Controller
                 'resolved_phone_number_id' => $phoneNumber?->id,
             ]));
 
-            return $this->xmlResponse($this->buildTwiml([
-                '<Say language="fr-BE">Le service est temporairement indisponible. Merci de rappeler plus tard.</Say>',
-            ]));
+            return $this->unavailableResponse();
         }
 
         $call = Call::updateOrCreate(
@@ -43,6 +49,21 @@ class TwilioVoiceWebhookController extends Controller
                 'metadata' => $request->all(),
             ],
         );
+
+        if ($call->wasRecentlyCreated) {
+            $this->activityLogger->log(
+                tenant: $tenant,
+                eventType: 'call_received',
+                title: 'Appel recu',
+                description: 'Un nouvel appel entrant a ete enregistre sur la ligne '.$phoneNumber->phone_number.'.',
+                call: $call,
+                metadata: [
+                    'from_number' => $call->from_number,
+                    'to_number' => $call->to_number,
+                    'phone_number_id' => $phoneNumber->id,
+                ],
+            );
+        }
 
         Log::info('twilio.webhook.incoming_received', $this->webhookContext($request, $call, [
             'resolved_phone_number_id' => $phoneNumber?->id,
@@ -90,25 +111,42 @@ class TwilioVoiceWebhookController extends Controller
     public function menu(Request $request): Response
     {
         $call = Call::where('external_sid', $request->string('CallSid')->toString())->first();
-        $tenant = $call?->tenant ?? Tenant::with('agentConfig')->first();
+        $tenant = $call?->tenant;
         $agentConfig = $tenant?->agentConfig;
 
         Log::info('twilio.webhook.menu_received', $this->webhookContext($request, $call, [
             'digits' => $request->string('Digits')->toString() ?: null,
         ]));
 
+        if (! $call || ! $tenant || ! $agentConfig) {
+            Log::warning('twilio.webhook.menu_unroutable', $this->webhookContext($request, $call));
+
+            return $this->unavailableResponse();
+        }
+
         if ($request->string('Digits')->toString() === '1' && filled($agentConfig?->transfer_phone_number)) {
-            $call?->update(['status' => 'transferring']);
+            $call->update(['status' => 'transferring']);
+
+            $this->activityLogger->log(
+                tenant: $tenant,
+                eventType: 'transfer_attempted',
+                title: 'Transfert tente',
+                description: 'Le caller a demande un transfert vers la ligne humaine.',
+                call: $call,
+                metadata: [
+                    'transfer_phone_number' => $agentConfig->transfer_phone_number,
+                ],
+            );
 
             Log::info('twilio.webhook.menu_transfer_selected', $this->webhookContext($request, $call));
 
             return $this->xmlResponse($this->buildTwiml([
                 '<Say language="fr-BE">Nous vous transférons immédiatement.</Say>',
-                '<Dial action="' . e(route('webhooks.twilio.voice.status', absolute: true)) . '" method="POST">' . e($agentConfig->transfer_phone_number) . '</Dial>',
+                '<Dial action="'.e(route('webhooks.twilio.voice.status', absolute: true)).'" method="POST">'.e($agentConfig->transfer_phone_number).'</Dial>',
             ]));
         }
 
-        $call?->update(['status' => 'voicemail_prompted']);
+        $call->update(['status' => 'voicemail_prompted']);
 
         Log::info('twilio.webhook.menu_voicemail_selected', $this->webhookContext($request, $call));
 
@@ -123,14 +161,24 @@ class TwilioVoiceWebhookController extends Controller
         $call = Call::where('external_sid', $request->string('CallSid')->toString())->first();
 
         if ($call) {
-            CallMessage::updateOrCreate(
+            $recordingUrl = $this->normalizedRecordingMediaUrl($request->string('RecordingUrl')->toString());
+
+            $message = CallMessage::updateOrCreate(
                 ['call_id' => $call->id],
                 [
                     'tenant_id' => $call->tenant_id,
                     'caller_number' => $request->string('From')->toString() ?: $call->from_number,
-                    'recording_url' => $request->string('RecordingUrl')->toString(),
+                    'recording_url' => $recordingUrl,
                     'recording_duration' => $request->integer('RecordingDuration') ?: null,
                     'message_text' => 'Message vocal reçu.',
+                    'transcription_status' => CallMessage::TRANSCRIPTION_STATUS_PENDING,
+                    'transcript_provider' => null,
+                    'transcription_error' => null,
+                    'transcription_processed_at' => null,
+                    'ai_summary' => null,
+                    'ai_intent' => null,
+                    'urgency_level' => null,
+                    'automation_processed_at' => null,
                     'notified_at' => now(),
                 ],
             );
@@ -140,19 +188,57 @@ class TwilioVoiceWebhookController extends Controller
                 'ended_at' => now(),
                 'summary' => $this->voicemailSummary($call),
                 'metadata' => $this->mergeMetadata($call, $this->filterNullValues([
-                    'recording_url' => $request->string('RecordingUrl')->toString() ?: null,
+                    'recording_url' => $recordingUrl ?: null,
+                    'recording_source_url' => $request->string('RecordingUrl')->toString() ?: null,
                     'recording_duration_seconds' => $this->requestInteger($request, 'RecordingDuration'),
                 ])),
             ]);
 
             $notificationEmail = $call->tenant->agentConfig?->notification_email;
 
-            if ($notificationEmail) {
-                Mail::raw(
-                    "Nouveau message vocal pour {$call->tenant->name}.\n\nAppelant: {$call->from_number}\nEnregistrement: {$request->string('RecordingUrl')->toString()}",
-                    fn ($message) => $message->to($notificationEmail)->subject('Receptio - nouveau message vocal'),
+            if ($message->wasRecentlyCreated) {
+                $this->activityLogger->log(
+                    tenant: $call->tenant,
+                    eventType: 'message_received',
+                    title: 'Message vocal recu',
+                    description: 'Un message vocal a ete enregistre et attache a l appel.',
+                    call: $call,
+                    callMessage: $message,
+                    metadata: [
+                        'caller_number' => $message->caller_number,
+                        'recording_duration' => $message->recording_duration,
+                    ],
                 );
             }
+
+            $this->activityLogger->log(
+                tenant: $call->tenant,
+                eventType: 'voicemail_insights_requested',
+                title: 'Analyse automatique demandee',
+                description: 'Le message vocal est mis en file pour transcription et resume.',
+                call: $call,
+                callMessage: $message,
+            );
+
+            if ($notificationEmail) {
+                Mail::to($notificationEmail)->send(
+                    new VoicemailReceivedMail($call->fresh('tenant'), $message),
+                );
+
+                $this->activityLogger->log(
+                    tenant: $call->tenant,
+                    eventType: 'notification_email_sent',
+                    title: 'Notification email envoyee',
+                    description: 'Le message vocal a ete distribue vers '.$notificationEmail.'.',
+                    call: $call,
+                    callMessage: $message,
+                    metadata: [
+                        'notification_email' => $notificationEmail,
+                    ],
+                );
+            }
+
+            ProcessVoicemailInsights::dispatch($call->id);
 
             Log::info('twilio.webhook.recording_received', $this->webhookContext($request, $call, [
                 'recording_duration_seconds' => $this->requestInteger($request, 'RecordingDuration'),
@@ -224,6 +310,25 @@ class TwilioVoiceWebhookController extends Controller
                 $status = 'voicemail_prompted';
                 $fallbackResponse = $this->buildTransferFailureFallbackResponse($call);
 
+                if (! data_get($call->metadata, 'activity_flags.transfer_failed_logged')) {
+                    $this->activityLogger->log(
+                        tenant: $call->tenant,
+                        eventType: 'transfer_failed',
+                        title: 'Transfert echoue',
+                        description: 'Le transfert humain a echoue et l appel a ete bascule vers la messagerie.',
+                        call: $call,
+                        metadata: [
+                            'dial_call_status' => $dialStatus,
+                            'fallback_target' => 'voicemail',
+                        ],
+                    );
+
+                    $metadata['activity_flags'] = array_merge(
+                        (array) data_get($call->metadata, 'activity_flags', []),
+                        ['transfer_failed_logged' => true],
+                    );
+                }
+
                 Log::warning('twilio.webhook.status_transfer_failed_fallback', $this->webhookContext($request, $call, [
                     'resolved_status' => $status,
                     'fallback_target' => 'voicemail',
@@ -258,22 +363,22 @@ class TwilioVoiceWebhookController extends Controller
 
     private function buildTwiml(array $verbs): string
     {
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response>" . implode('', $verbs) . '</Response>';
+        return '<?xml version="1.0" encoding="UTF-8"?><Response>'.implode('', $verbs).'</Response>';
     }
 
     private function gather(string $action, array $verbs): string
     {
-        return '<Gather input="dtmf" numDigits="1" timeout="4" action="' . e($action) . '" method="POST">' . implode('', $verbs) . '</Gather>';
+        return '<Gather input="dtmf" numDigits="1" timeout="4" action="'.e($action).'" method="POST">'.implode('', $verbs).'</Gather>';
     }
 
     private function record(string $action): string
     {
-        return '<Record action="' . e($action) . '" method="POST" maxLength="120" playBeep="true" trim="trim-silence" />';
+        return '<Record action="'.e($action).'" method="POST" maxLength="120" playBeep="true" trim="trim-silence" />';
     }
 
     private function say(string $message): string
     {
-        return '<Say language="fr-BE">' . e($message) . '</Say>';
+        return '<Say language="fr-BE">'.e($message).'</Say>';
     }
 
     private function summaryForStatus(Call $call, string $status, array $metadata): ?string
@@ -282,7 +387,7 @@ class TwilioVoiceWebhookController extends Controller
             'transferred' => 'Transfert humain réussi.',
             'busy', 'no_answer', 'failed' => $this->transferFailureSummary(data_get($metadata, 'transfer_failure_status', $status)),
             'voicemail_prompted' => ($metadata['fallback_target'] ?? null) === 'voicemail'
-                ? $this->transferFailureSummary(data_get($metadata, 'transfer_failure_status')) . ' Bascule vers messagerie.'
+                ? $this->transferFailureSummary(data_get($metadata, 'transfer_failure_status')).' Bascule vers messagerie.'
                 : ($call->summary ?? 'Messagerie proposée au caller.'),
             default => $call->summary,
         };
@@ -293,7 +398,7 @@ class TwilioVoiceWebhookController extends Controller
         $transferFailureStatus = data_get($call->metadata, 'transfer_failure_status');
 
         if ($transferFailureStatus) {
-            return $this->transferFailureSummary($transferFailureStatus) . ' Message vocal reçu depuis le webhook Twilio.';
+            return $this->transferFailureSummary($transferFailureStatus).' Message vocal reçu depuis le webhook Twilio.';
         }
 
         return 'Message vocal reçu depuis le webhook Twilio.';
@@ -321,10 +426,8 @@ class TwilioVoiceWebhookController extends Controller
 
     private function buildTransferFailureFallbackResponse(Call $call): Response
     {
-        $agentConfig = $call->tenant?->agentConfig;
-
         return $this->xmlResponse($this->buildTwiml([
-            $this->say($agentConfig?->after_hours_message ?: 'La ligne humaine est indisponible pour le moment. Merci de laisser un message après le bip.'),
+            $this->say('La ligne humaine est indisponible pour le moment. Merci de laisser un message après le bip.'),
             $this->record(route('webhooks.twilio.voice.recording', absolute: true)),
         ]));
     }
@@ -407,9 +510,15 @@ class TwilioVoiceWebhookController extends Controller
 
     private function resolvePhoneNumber(string $phoneNumber): ?PhoneNumber
     {
-        return PhoneNumber::where('phone_number', $phoneNumber)
-            ->orWhere('phone_number', preg_replace('/\s+/', '', $phoneNumber))
-            ->first();
+        return $this->tenantResolver->resolvePhoneNumber($phoneNumber);
+    }
+
+    private function unavailableResponse(): Response
+    {
+        return $this->xmlResponse($this->buildTwiml([
+            '<Say language="fr-BE">Le service est temporairement indisponible. Merci de rappeler plus tard.</Say>',
+            '<Hangup/>',
+        ]));
     }
 
     private function isOpen(AgentConfig $agentConfig): bool
@@ -433,5 +542,18 @@ class TwilioVoiceWebhookController extends Controller
     private function xmlResponse(string $content): Response
     {
         return response($content, 200, ['Content-Type' => 'text/xml']);
+    }
+
+    private function normalizedRecordingMediaUrl(string $recordingUrl): ?string
+    {
+        if ($recordingUrl === '') {
+            return null;
+        }
+
+        if (preg_match('/\.(mp3|wav)$/i', $recordingUrl)) {
+            return $recordingUrl;
+        }
+
+        return $recordingUrl.'.mp3';
     }
 }

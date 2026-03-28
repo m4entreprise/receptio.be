@@ -16,12 +16,14 @@ class PhoneNumber extends Model
         'label',
         'phone_number',
         'is_active',
+        'is_primary',
     ];
 
     protected function casts(): array
     {
         return [
             'is_active' => 'boolean',
+            'is_primary' => 'boolean',
         ];
     }
 

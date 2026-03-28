@@ -2,17 +2,19 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Tenant;
+use App\Support\TenantResolver;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class DashboardController extends Controller
 {
+    public function __construct(private readonly TenantResolver $tenantResolver) {}
+
     public function __invoke(Request $request): Response
     {
-        $tenant = $request->user()->tenant()->with(['agentConfig', 'phoneNumbers', 'calls.message'])->first()
-            ?? Tenant::with(['agentConfig', 'phoneNumbers', 'calls.message'])->first();
+        $tenant = $this->tenantResolver->forUser($request->user(), ['agentConfig', 'phoneNumbers', 'calls.message']);
+        $primaryPhoneNumber = $this->tenantResolver->primaryPhoneNumber($tenant);
 
         $agentConfig = $tenant?->agentConfig;
         $recentCalls = collect();
@@ -68,7 +70,7 @@ class DashboardController extends Controller
                 'opens_at' => $agentConfig?->opens_at ? substr($agentConfig->opens_at, 0, 5) : null,
                 'closes_at' => $agentConfig?->closes_at ? substr($agentConfig->closes_at, 0, 5) : null,
                 'business_days' => $agentConfig?->business_days ?? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
-                'phone_number' => $tenant?->phoneNumbers->first()?->phone_number ?? '',
+                'phone_number' => $primaryPhoneNumber?->phone_number ?? '',
             ],
             'recentCalls' => $recentCalls,
             'webhooks' => [

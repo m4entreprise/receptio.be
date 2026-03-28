@@ -49,6 +49,7 @@ class DatabaseSeeder extends Seeder
                 'provider' => 'twilio',
                 'label' => 'Ligne principale',
                 'is_active' => true,
+                'is_primary' => true,
             ],
         );
 
@@ -84,6 +85,7 @@ class DatabaseSeeder extends Seeder
                 'tenant_id' => $tenant->id,
                 'caller_name' => 'Jean Dupont',
                 'caller_number' => '+32471234567',
+                'status' => CallMessage::STATUS_NEW,
                 'message_text' => 'Bonjour, je souhaite être rappelé demain matin pour une démonstration.',
                 'recording_url' => 'https://api.twilio.com/demo-recording',
                 'recording_duration' => 48,

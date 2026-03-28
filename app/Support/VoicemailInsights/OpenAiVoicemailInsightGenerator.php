@@ -1,0 +1,302 @@
+<?php
+
+namespace App\Support\VoicemailInsights;
+
+use App\Models\Call;
+use App\Models\CallMessage;
+use Illuminate\Http\Client\Factory as HttpFactory;
+use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use RuntimeException;
+
+class OpenAiVoicemailInsightGenerator implements GeneratesVoicemailInsights
+{
+    public function __construct(
+        private readonly HttpFactory $http,
+        private readonly HeuristicVoicemailInsightGenerator $heuristic,
+        private readonly ?string $apiKey,
+        private readonly ?string $transcriptionModel,
+        private readonly ?string $textModel,
+    ) {}
+
+    public function generate(Call $call, CallMessage $message): VoicemailInsights
+    {
+        if (! $this->apiKey || ! $this->transcriptionModel) {
+            return $this->heuristic->generate($call, $message);
+        }
+
+        $temporaryFile = $this->downloadRecording($message->recording_url);
+
+        if (! $temporaryFile) {
+            $heuristic = $this->heuristic->summarize($call, $message, null);
+
+            return new VoicemailInsights(
+                transcript: null,
+                transcriptionStatus: CallMessage::TRANSCRIPTION_STATUS_UNAVAILABLE,
+                provider: $this->providerLabel(),
+                summary: $heuristic->summary,
+                intent: $heuristic->intent,
+                urgency: $heuristic->urgency,
+                error: 'recording_unavailable',
+            );
+        }
+
+        try {
+            $uploadFilename = $this->uploadFilename($message->recording_url);
+            $uploadHeaders = ['Content-Type' => $this->uploadMimeType($uploadFilename)];
+
+            $response = $this->http
+                ->withToken($this->apiKey)
+                ->acceptJson()
+                ->attach('file', fopen($temporaryFile, 'r'), $uploadFilename, $uploadHeaders)
+                ->post('https://api.openai.com/v1/audio/transcriptions', [
+                    'model' => $this->transcriptionModel,
+                    'language' => 'fr',
+                ])
+                ->throw()
+                ->json();
+
+            $transcript = trim((string) Arr::get($response, 'text'));
+            $analysis = $this->analyzeTranscript($call, $message, $transcript !== '' ? $transcript : null);
+
+            return new VoicemailInsights(
+                transcript: $transcript !== '' ? $transcript : null,
+                transcriptionStatus: $transcript !== '' ? CallMessage::TRANSCRIPTION_STATUS_COMPLETED : CallMessage::TRANSCRIPTION_STATUS_UNAVAILABLE,
+                provider: $this->providerLabel(),
+                summary: $analysis->summary,
+                intent: $analysis->intent,
+                urgency: $analysis->urgency,
+                error: $transcript !== '' ? null : 'empty_transcript',
+            );
+        } catch (\Throwable $exception) {
+            Log::warning('voicemail.transcription.openai_failed', [
+                'call_id' => $call->id,
+                'call_message_id' => $message->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            $heuristic = $this->heuristic->generate($call, $message);
+
+            return new VoicemailInsights(
+                transcript: $heuristic->transcript,
+                transcriptionStatus: CallMessage::TRANSCRIPTION_STATUS_FAILED,
+                provider: $this->providerLabel(),
+                summary: $heuristic->summary,
+                intent: $heuristic->intent,
+                urgency: $heuristic->urgency,
+                error: $exception->getMessage(),
+            );
+        } finally {
+            @unlink($temporaryFile);
+        }
+    }
+
+    private function analyzeTranscript(Call $call, CallMessage $message, ?string $transcript): VoicemailInsights
+    {
+        $heuristic = $this->heuristic->summarize($call, $message, $transcript);
+
+        if (! $transcript || ! $this->textModel) {
+            return $heuristic;
+        }
+
+        try {
+            $response = $this->http
+                ->withToken($this->apiKey)
+                ->acceptJson()
+                ->post('https://api.openai.com/v1/chat/completions', [
+                    'model' => $this->textModel,
+                    'messages' => [
+                        [
+                            'role' => 'system',
+                            'content' => 'Tu analyses des messages vocaux entrants pour un standard telephonique. Reponds uniquement en JSON valide.',
+                        ],
+                        [
+                            'role' => 'user',
+                            'content' => $this->analysisPrompt($call, $message, $transcript),
+                        ],
+                    ],
+                    'response_format' => [
+                        'type' => 'json_schema',
+                        'json_schema' => [
+                            'name' => 'voicemail_insights',
+                            'strict' => true,
+                            'schema' => [
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'properties' => [
+                                    'summary' => ['type' => 'string'],
+                                    'intent' => [
+                                        'type' => 'string',
+                                        'enum' => ['commercial', 'planning', 'facturation', 'support', 'rappel', 'contact_general'],
+                                    ],
+                                    'urgency' => [
+                                        'type' => 'string',
+                                        'enum' => ['low', 'medium', 'high'],
+                                    ],
+                                ],
+                                'required' => ['summary', 'intent', 'urgency'],
+                            ],
+                        ],
+                    ],
+                ])
+                ->throw()
+                ->json();
+
+            $content = data_get($response, 'choices.0.message.content');
+            $decoded = is_string($content) ? json_decode($content, true) : null;
+
+            if (! is_array($decoded)) {
+                return $heuristic;
+            }
+
+            return new VoicemailInsights(
+                transcript: $transcript,
+                transcriptionStatus: CallMessage::TRANSCRIPTION_STATUS_COMPLETED,
+                provider: $this->providerLabel(),
+                summary: $this->stringOrFallback($decoded, 'summary', $heuristic->summary),
+                intent: $this->enumOrFallback($decoded, 'intent', ['commercial', 'planning', 'facturation', 'support', 'rappel', 'contact_general'], $heuristic->intent ?? 'contact_general'),
+                urgency: $this->enumOrFallback($decoded, 'urgency', ['low', 'medium', 'high'], $heuristic->urgency ?? 'low'),
+                error: null,
+            );
+        } catch (\Throwable $exception) {
+            Log::warning('voicemail.analysis.openai_failed', [
+                'call_id' => $call->id,
+                'call_message_id' => $message->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return $heuristic;
+        }
+    }
+
+    private function analysisPrompt(Call $call, CallMessage $message, string $transcript): string
+    {
+        $caller = $message->caller_name ?: $message->caller_number ?: $call->from_number ?: 'Inconnu';
+
+        return implode("\n", [
+            'Contexte: message vocal laisse a un standard telephonique.',
+            'Appelant: '.$caller,
+            'Numero: '.($message->caller_number ?: $call->from_number ?: 'Inconnu'),
+            'Transcript:',
+            $transcript,
+            '',
+            'Produis:',
+            '- un summary tres court en francais, utile pour une equipe de reception',
+            '- une intent parmi: commercial, planning, facturation, support, rappel, contact_general',
+            '- une urgency parmi: low, medium, high',
+        ]);
+    }
+
+    private function stringOrFallback(array $payload, string $key, ?string $fallback): ?string
+    {
+        $value = trim((string) data_get($payload, $key));
+
+        return $value !== '' ? Str::limit($value, 240) : $fallback;
+    }
+
+    private function enumOrFallback(array $payload, string $key, array $allowed, string $fallback): string
+    {
+        $value = (string) data_get($payload, $key);
+
+        return in_array($value, $allowed, true) ? $value : $fallback;
+    }
+
+    private function downloadRecording(?string $recordingUrl): ?string
+    {
+        if (! $recordingUrl) {
+            return null;
+        }
+
+        $normalizedUrl = $this->normalizedRecordingMediaUrl($recordingUrl);
+        $response = $this->recordingRequest($normalizedUrl)->get($normalizedUrl);
+
+        if (! $response->successful()) {
+            Log::warning('voicemail.recording_download_failed', [
+                'recording_url' => $normalizedUrl,
+                'status' => $response->status(),
+            ]);
+
+            return null;
+        }
+
+        $extension = $this->recordingExtension($normalizedUrl, $response);
+        $path = tempnam(sys_get_temp_dir(), 'receptio-audio-');
+
+        if (! $path) {
+            throw new RuntimeException('Unable to allocate temporary file for voicemail transcription.');
+        }
+
+        $finalPath = $path.'.'.$extension;
+
+        if (! @rename($path, $finalPath)) {
+            @unlink($path);
+
+            throw new RuntimeException('Unable to finalize temporary audio file for voicemail transcription.');
+        }
+
+        file_put_contents($finalPath, $response->body());
+
+        return $finalPath;
+    }
+
+    private function recordingRequest(string $recordingUrl): PendingRequest
+    {
+        $request = $this->http->timeout(30);
+        $host = parse_url($recordingUrl, PHP_URL_HOST);
+
+        if (is_string($host) && str_contains($host, 'twilio.com')) {
+            $accountSid = config('services.twilio.account_sid');
+            $authToken = config('services.twilio.auth_token');
+
+            if ($accountSid && $authToken) {
+                $request = $request->withBasicAuth($accountSid, $authToken);
+            }
+        }
+
+        return $request;
+    }
+
+    private function normalizedRecordingMediaUrl(string $recordingUrl): string
+    {
+        if (preg_match('/\.(mp3|wav)$/i', $recordingUrl)) {
+            return $recordingUrl;
+        }
+
+        return $recordingUrl.'.mp3';
+    }
+
+    private function uploadFilename(?string $recordingUrl): string
+    {
+        return 'voicemail.'.$this->recordingExtension($recordingUrl);
+    }
+
+    private function uploadMimeType(string $filename): string
+    {
+        return str_ends_with(strtolower($filename), '.wav') ? 'audio/wav' : 'audio/mpeg';
+    }
+
+    private function recordingExtension(?string $recordingUrl, ?Response $response = null): string
+    {
+        $path = is_string($recordingUrl) ? parse_url($recordingUrl, PHP_URL_PATH) : null;
+
+        if (is_string($path) && preg_match('/\.(mp3|wav)$/i', $path, $matches)) {
+            return strtolower($matches[1]);
+        }
+
+        $contentType = strtolower((string) $response?->header('Content-Type'));
+
+        return str_contains($contentType, 'wav') ? 'wav' : 'mp3';
+    }
+
+    private function providerLabel(): string
+    {
+        if ($this->textModel && $this->textModel !== $this->transcriptionModel) {
+            return 'openai:'.$this->transcriptionModel.'+'.$this->textModel;
+        }
+
+        return 'openai:'.$this->transcriptionModel;
+    }
+}

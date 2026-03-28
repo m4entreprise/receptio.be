@@ -36,7 +36,14 @@ return [
     ],
 
     'twilio' => [
+        'account_sid' => env('TWILIO_ACCOUNT_SID'),
         'auth_token' => env('TWILIO_AUTH_TOKEN'),
+    ],
+
+    'openai' => [
+        'api_key' => env('OPENAI_API_KEY'),
+        'transcription_model' => env('OPENAI_TRANSCRIPTION_MODEL', 'gpt-4o-mini-transcribe'),
+        'text_model' => env('OPENAI_TEXT_MODEL', 'gpt-5.4-mini'),
     ],
 
 ];
