@@ -61,6 +61,13 @@ export interface CallMessage {
     workflow_status: string | null;
     workflow_status_label: string | null;
     workflow_status_tone: Tone | null;
+    transcription_status: string | null;
+    transcription_status_label: string | null;
+    transcription_status_tone: Tone | null;
+    transcript_provider: string | null;
+    ai_summary: string | null;
+    ai_intent: string | null;
+    urgency_level: string | null;
     assigned_to_user_id: number | null;
     assigned_to_name: string | null;
     handled_by_name: string | null;
@@ -116,6 +123,13 @@ export interface InboxMessageItem {
     status: string;
     status_label: string;
     status_tone: Tone;
+    transcription_status: string | null;
+    transcription_status_label: string | null;
+    transcription_status_tone: Tone | null;
+    transcript_provider: string | null;
+    ai_summary: string | null;
+    ai_intent: string | null;
+    urgency_level: string | null;
     call_status: string | null;
     call_status_label: string | null;
     priority: string;

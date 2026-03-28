@@ -608,6 +608,13 @@ class BackofficeController extends Controller
                 'workflow_status' => $call->message->status,
                 'workflow_status_label' => $this->messageStatusLabel($call->message->status),
                 'workflow_status_tone' => $this->messageStatusTone($call->message->status),
+                'transcription_status' => $call->message->transcription_status,
+                'transcription_status_label' => $this->transcriptionStatusLabel($call->message->transcription_status),
+                'transcription_status_tone' => $this->transcriptionStatusTone($call->message->transcription_status),
+                'transcript_provider' => $call->message->transcript_provider,
+                'ai_summary' => $call->message->ai_summary,
+                'ai_intent' => $call->message->ai_intent,
+                'urgency_level' => $call->message->urgency_level,
                 'assigned_to_user_id' => $call->message->assigned_to_user_id,
                 'assigned_to_name' => $call->message->assignedTo?->name,
                 'handled_by_name' => $call->message->handledBy?->name,
@@ -636,11 +643,18 @@ class BackofficeController extends Controller
             'status' => $message->status,
             'status_label' => $this->messageStatusLabel($message->status),
             'status_tone' => $this->messageStatusTone($message->status),
+            'transcription_status' => $message->transcription_status,
+            'transcription_status_label' => $this->transcriptionStatusLabel($message->transcription_status),
+            'transcription_status_tone' => $this->transcriptionStatusTone($message->transcription_status),
+            'transcript_provider' => $message->transcript_provider,
+            'ai_summary' => $message->ai_summary,
+            'ai_intent' => $message->ai_intent,
+            'urgency_level' => $message->urgency_level,
             'call_status' => $call?->status,
             'call_status_label' => $call?->status ? $this->statusLabel($call->status) : null,
             'priority' => $priority,
             'created_at' => $message->created_at?->toIso8601String(),
-            'summary' => $call?->summary,
+            'summary' => $message->ai_summary ?? $call?->summary,
             'assigned_to_user_id' => $message->assigned_to_user_id,
             'assigned_to_name' => $message->assignedTo?->name,
             'handled_by_name' => $message->handledBy?->name,
@@ -742,12 +756,34 @@ class BackofficeController extends Controller
         };
     }
 
+    private function transcriptionStatusLabel(?string $status): string
+    {
+        return match ($status) {
+            CallMessage::TRANSCRIPTION_STATUS_PENDING => 'Analyse en attente',
+            CallMessage::TRANSCRIPTION_STATUS_COMPLETED => 'Analyse disponible',
+            CallMessage::TRANSCRIPTION_STATUS_UNAVAILABLE => 'Analyse indisponible',
+            CallMessage::TRANSCRIPTION_STATUS_FAILED => 'Analyse en echec',
+            default => 'Analyse non definie',
+        };
+    }
+
+    private function transcriptionStatusTone(?string $status): string
+    {
+        return match ($status) {
+            CallMessage::TRANSCRIPTION_STATUS_COMPLETED => 'success',
+            CallMessage::TRANSCRIPTION_STATUS_PENDING => 'info',
+            CallMessage::TRANSCRIPTION_STATUS_UNAVAILABLE => 'neutral',
+            CallMessage::TRANSCRIPTION_STATUS_FAILED => 'warning',
+            default => 'default',
+        };
+    }
+
     private function activityTone(string $eventType): string
     {
         return match ($eventType) {
             'transfer_failed' => 'warning',
-            'notification_email_sent', 'callback_scheduled', 'transfer_attempted', 'message_assigned' => 'info',
-            'message_status_updated' => 'success',
+            'notification_email_sent', 'callback_scheduled', 'transfer_attempted', 'message_assigned', 'voicemail_insights_requested' => 'info',
+            'message_status_updated', 'voicemail_insights_generated' => 'success',
             default => 'default',
         };
     }

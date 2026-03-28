@@ -86,17 +86,19 @@ La suite consiste a transformer ce socle en produit robuste.
 - phase 2 implementee cote Laravel et dashboard
 - phase 3 validee cote code et tests
 - phase 4 engagee cote code avec workflow de rappel, notifications email enrichies et journal d'activite
+- phase 5 engagee cote code avec pipeline asynchrone transcription -> resume -> qualification
 
 ### Ce qui reste a valider ou terminer
 
 - configurer Twilio dans la console pour les status callbacks
 - appliquer les migrations recentes en environnement local/staging/prod
 - valider la recette Twilio reelle en environnement public
+- configurer un provider de transcription si l'on veut une vraie speech-to-text en production
 
 ### Point de vigilance
 
 - la base de code avance plus vite que la recette terrain Twilio
-- les briques critiques sont maintenant couvertes par des tests executables, mais la validation production reste a faire
+- les briques critiques sont maintenant couvertes par des tests executables, mais la validation production et le provider IA restent a finaliser
 
 ---
 
@@ -408,31 +410,37 @@ Ajouter de la valeur sans fragiliser le socle.
 
 ## Etat de phase
 
-- **non commencee**
+- **en cours**
+- **socle implemente et verifie**
 
 ## Etape 5.1 - Transcription des messages vocaux
 
-### Travail a faire
+### Etat d'avancement
 
-- recuperer le media audio
-- declencher une transcription asynchrone
-- stocker la transcription dans `call_messages` ou `calls`
+- **implemente cote application**
+- recuperation de l'enregistrement et job asynchrone de traitement en place
+- stockage de la transcription dans `calls.transcript` et `call_messages.message_text`
+- statuts de transcription traces sur `call_messages`
+- fallback heuristique disponible si aucun provider externe n'est configure
 
 ## Etape 5.2 - Resume automatique
 
-### Travail a faire
+### Etat d'avancement
 
-- generer un resume court du message
-- identifier l'intention principale
-- detecter l'urgence potentielle
+- **implemente cote application**
+- generation d'un resume court exploitable
+- identification d'une intention metier
+- detection d'un niveau d'urgence `low` / `medium` / `high`
+- restitution visible dans l'inbox et la fiche appel
 
 ## Etape 5.3 - FAQ et reponses assistees
 
-### Travail a faire
+### Etat d'avancement
 
-- structurer `faq_content`
-- preparer une base de reponses metier
-- envisager un futur agent plus conversationnel
+- **amorcee**
+- le pipeline d'analyse produit deja les briques necessaires pour assister les reponses
+- reste a brancher une vraie logique de suggestions de reponse a partir de `faq_content`
+- reste a definir le niveau d'automatisation acceptable avant envoi
 
 ---
 
@@ -524,23 +532,27 @@ Passer d'un produit qui fonctionne a un produit que l'on peut vendre sereinement
 - phase 2 : solide cote application
 - phase 3 : validee cote code et tests
 - phase 4 : engagee et verifiee cote code
+- phase 5 : engagee et verifiee sur son socle technique
 
 ### Pas encore termine
 
 - configuration Twilio dans la console
 - application des migrations phase 4
+- application des migrations phase 5
 - verification terrain Twilio des nouveaux flux
+- configuration d'un provider de transcription si l'on veut de la vraie voix -> texte
 
 ### Prochaine etape recommandee
 
-Finaliser la mise en production de la phase 4 :
+Finaliser la mise en production des phases 4 et 5 :
 
 - appliquer les migrations recentes
 - verifier les cas reels Twilio avec numeros connus et inconnus
 - confirmer le rendu des emails en environnement reel
+- tester une vraie transcription audio en environnement public si un provider est configure
 
 Une fois cela valide, enchainer sur :
 
-- transcription
-- resume automatique
-- premieres automatisations IA
+- suggestions de reponse
+- exploitation de la FAQ
+- automatisations IA plus avancees

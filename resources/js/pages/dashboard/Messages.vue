@@ -216,6 +216,16 @@ const updateStatus = (messageId: number, status: string) => {
                                             <ToneBadge :label="message.priority" :tone="message.priority === 'Élevée' ? 'warning' : 'neutral'" />
                                             <ToneBadge :label="message.status_label" :tone="message.status_tone" />
                                             <ToneBadge v-if="message.call_status_label" :label="message.call_status_label" tone="info" />
+                                            <ToneBadge
+                                                v-if="message.transcription_status_label"
+                                                :label="message.transcription_status_label"
+                                                :tone="message.transcription_status_tone ?? 'neutral'"
+                                            />
+                                            <ToneBadge
+                                                v-if="message.urgency_level"
+                                                :label="`Urgence ${message.urgency_level}`"
+                                                :tone="message.urgency_level === 'high' ? 'warning' : message.urgency_level === 'medium' ? 'info' : 'neutral'"
+                                            />
                                         </div>
                                         <p class="text-sm text-muted-foreground">{{ message.phone }}</p>
                                     </div>
@@ -234,7 +244,11 @@ const updateStatus = (messageId: number, status: string) => {
                                     <div class="space-y-3 rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
                                         <div>
                                             <p class="font-medium text-foreground">Résumé d’exploitation</p>
-                                            <p class="mt-2 leading-6">{{ message.summary ?? 'Le message n’a pas encore de résumé enrichi.' }}</p>
+                                            <p class="mt-2 leading-6">{{ message.ai_summary ?? message.summary ?? 'Le message n’a pas encore de résumé enrichi.' }}</p>
+                                        </div>
+                                        <div class="space-y-1 text-xs">
+                                            <p>Intent détectée: {{ message.ai_intent ?? 'Non définie' }}</p>
+                                            <p>Provider transcription: {{ message.transcript_provider ?? 'Aucun' }}</p>
                                         </div>
                                         <div class="space-y-1 text-xs">
                                             <p>Assigné à: {{ message.assigned_to_name ?? 'Personne' }}</p>

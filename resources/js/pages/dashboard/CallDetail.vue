@@ -115,9 +115,19 @@ defineProps<Props>();
                                 :tone="call.message.workflow_status_tone ?? 'neutral'"
                             />
                             <ToneBadge
+                                v-if="call.message.transcription_status_label"
+                                :label="call.message.transcription_status_label"
+                                :tone="call.message.transcription_status_tone ?? 'neutral'"
+                            />
+                            <ToneBadge
                                 v-if="call.message.recording_duration !== null"
                                 :label="`${call.message.recording_duration}s`"
                                 tone="neutral"
+                            />
+                            <ToneBadge
+                                v-if="call.message.urgency_level"
+                                :label="`Urgence ${call.message.urgency_level}`"
+                                :tone="call.message.urgency_level === 'high' ? 'warning' : call.message.urgency_level === 'medium' ? 'info' : 'neutral'"
                             />
                         </div>
                         <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
@@ -128,6 +138,12 @@ defineProps<Props>();
                         <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
                             <p class="font-medium text-foreground">Contenu</p>
                             <p class="mt-2 leading-6">{{ call.message.message_text ?? 'Aucune transcription manuelle disponible.' }}</p>
+                            <p class="mt-3 text-xs">Intent détectée: {{ call.message.ai_intent ?? 'Non définie' }}</p>
+                            <p class="mt-1 text-xs">Provider transcription: {{ call.message.transcript_provider ?? 'Aucun' }}</p>
+                        </div>
+                        <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
+                            <p class="font-medium text-foreground">Résumé automatique</p>
+                            <p class="mt-2 leading-6">{{ call.message.ai_summary ?? call.summary ?? 'Aucun résumé automatique disponible.' }}</p>
                         </div>
                         <audio v-if="call.message.recording_url" :src="call.message.recording_url" controls class="w-full" preload="none" />
                         <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">

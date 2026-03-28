@@ -19,6 +19,14 @@ class CallMessage extends Model
 
     public const STATUS_CLOSED = 'closed';
 
+    public const TRANSCRIPTION_STATUS_PENDING = 'pending';
+
+    public const TRANSCRIPTION_STATUS_COMPLETED = 'completed';
+
+    public const TRANSCRIPTION_STATUS_UNAVAILABLE = 'unavailable';
+
+    public const TRANSCRIPTION_STATUS_FAILED = 'failed';
+
     protected $fillable = [
         'tenant_id',
         'call_id',
@@ -33,6 +41,14 @@ class CallMessage extends Model
         'handled_by_user_id',
         'handled_at',
         'callback_due_at',
+        'transcription_status',
+        'transcript_provider',
+        'transcription_error',
+        'transcription_processed_at',
+        'ai_summary',
+        'ai_intent',
+        'urgency_level',
+        'automation_processed_at',
     ];
 
     protected function casts(): array
@@ -41,6 +57,8 @@ class CallMessage extends Model
             'notified_at' => 'datetime',
             'handled_at' => 'datetime',
             'callback_due_at' => 'datetime',
+            'transcription_processed_at' => 'datetime',
+            'automation_processed_at' => 'datetime',
         ];
     }
 
@@ -76,6 +94,16 @@ class CallMessage extends Model
             self::STATUS_IN_PROGRESS,
             self::STATUS_CALLED_BACK,
             self::STATUS_CLOSED,
+        ];
+    }
+
+    public static function transcriptionStatuses(): array
+    {
+        return [
+            self::TRANSCRIPTION_STATUS_PENDING,
+            self::TRANSCRIPTION_STATUS_COMPLETED,
+            self::TRANSCRIPTION_STATUS_UNAVAILABLE,
+            self::TRANSCRIPTION_STATUS_FAILED,
         ];
     }
 }

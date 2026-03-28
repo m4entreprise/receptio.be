@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessVoicemailInsights;
 use App\Mail\VoicemailReceivedMail;
 use App\Models\AgentConfig;
 use App\Models\Call;
@@ -168,6 +169,14 @@ class TwilioVoiceWebhookController extends Controller
                     'recording_url' => $request->string('RecordingUrl')->toString(),
                     'recording_duration' => $request->integer('RecordingDuration') ?: null,
                     'message_text' => 'Message vocal reçu.',
+                    'transcription_status' => CallMessage::TRANSCRIPTION_STATUS_PENDING,
+                    'transcript_provider' => null,
+                    'transcription_error' => null,
+                    'transcription_processed_at' => null,
+                    'ai_summary' => null,
+                    'ai_intent' => null,
+                    'urgency_level' => null,
+                    'automation_processed_at' => null,
                     'notified_at' => now(),
                 ],
             );
@@ -199,6 +208,15 @@ class TwilioVoiceWebhookController extends Controller
                 );
             }
 
+            $this->activityLogger->log(
+                tenant: $call->tenant,
+                eventType: 'voicemail_insights_requested',
+                title: 'Analyse automatique demandee',
+                description: 'Le message vocal est mis en file pour transcription et resume.',
+                call: $call,
+                callMessage: $message,
+            );
+
             if ($notificationEmail) {
                 Mail::to($notificationEmail)->send(
                     new VoicemailReceivedMail($call->fresh('tenant'), $message),
@@ -216,6 +234,8 @@ class TwilioVoiceWebhookController extends Controller
                     ],
                 );
             }
+
+            ProcessVoicemailInsights::dispatch($call->id);
 
             Log::info('twilio.webhook.recording_received', $this->webhookContext($request, $call, [
                 'recording_duration_seconds' => $this->requestInteger($request, 'RecordingDuration'),
