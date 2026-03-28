@@ -6,6 +6,7 @@ use App\Models\Call;
 use App\Models\CallMessage;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -44,10 +45,13 @@ class OpenAiVoicemailInsightGenerator implements GeneratesVoicemailInsights
         }
 
         try {
+            $uploadFilename = $this->uploadFilename($message->recording_url);
+            $uploadHeaders = ['Content-Type' => $this->uploadMimeType($uploadFilename)];
+
             $response = $this->http
                 ->withToken($this->apiKey)
                 ->acceptJson()
-                ->attach('file', fopen($temporaryFile, 'r'), basename($temporaryFile))
+                ->attach('file', fopen($temporaryFile, 'r'), $uploadFilename, $uploadHeaders)
                 ->post('https://api.openai.com/v1/audio/transcriptions', [
                     'model' => $this->transcriptionModel,
                     'language' => 'fr',
@@ -218,15 +222,24 @@ class OpenAiVoicemailInsightGenerator implements GeneratesVoicemailInsights
             return null;
         }
 
+        $extension = $this->recordingExtension($normalizedUrl, $response);
         $path = tempnam(sys_get_temp_dir(), 'receptio-audio-');
 
         if (! $path) {
             throw new RuntimeException('Unable to allocate temporary file for voicemail transcription.');
         }
 
-        file_put_contents($path, $response->body());
+        $finalPath = $path.'.'.$extension;
 
-        return $path;
+        if (! @rename($path, $finalPath)) {
+            @unlink($path);
+
+            throw new RuntimeException('Unable to finalize temporary audio file for voicemail transcription.');
+        }
+
+        file_put_contents($finalPath, $response->body());
+
+        return $finalPath;
     }
 
     private function recordingRequest(string $recordingUrl): PendingRequest
@@ -253,6 +266,29 @@ class OpenAiVoicemailInsightGenerator implements GeneratesVoicemailInsights
         }
 
         return $recordingUrl.'.mp3';
+    }
+
+    private function uploadFilename(?string $recordingUrl): string
+    {
+        return 'voicemail.'.$this->recordingExtension($recordingUrl);
+    }
+
+    private function uploadMimeType(string $filename): string
+    {
+        return str_ends_with(strtolower($filename), '.wav') ? 'audio/wav' : 'audio/mpeg';
+    }
+
+    private function recordingExtension(?string $recordingUrl, ?Response $response = null): string
+    {
+        $path = is_string($recordingUrl) ? parse_url($recordingUrl, PHP_URL_PATH) : null;
+
+        if (is_string($path) && preg_match('/\.(mp3|wav)$/i', $path, $matches)) {
+            return strtolower($matches[1]);
+        }
+
+        $contentType = strtolower((string) $response?->header('Content-Type'));
+
+        return str_contains($contentType, 'wav') ? 'wav' : 'mp3';
     }
 
     private function providerLabel(): string

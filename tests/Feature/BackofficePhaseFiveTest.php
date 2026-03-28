@@ -244,7 +244,9 @@ test('openai insight generator uses separate transcription and text models', fun
         ->and($insights->provider)->toBe('openai:gpt-4o-mini-transcribe+gpt-5.4-mini');
 
     Http::assertSent(fn ($request) => $request->url() === 'https://api.openai.com/v1/audio/transcriptions'
-        && str_contains($request->body(), 'gpt-4o-mini-transcribe'));
+        && str_contains($request->body(), 'gpt-4o-mini-transcribe')
+        && str_contains($request->body(), 'filename="voicemail.mp3"')
+        && str_contains($request->body(), 'Content-Type: audio/mpeg'));
 
     Http::assertSent(fn ($request) => $request->url() === 'https://api.openai.com/v1/chat/completions'
         && $request['model'] === 'gpt-5.4-mini');
