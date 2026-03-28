@@ -111,7 +111,7 @@ defineProps<Props>();
                                     {{ call.started_at ? new Date(call.started_at).toLocaleString('fr-BE') : 'n/a' }}
                                 </div>
                                 <div class="text-sm text-muted-foreground">
-                                    {{ call.duration_seconds ? `${call.duration_seconds}s` : 'n/a' }}
+                                    {{ call.duration_seconds !== null ? `${call.duration_seconds}s` : 'n/a' }}
                                 </div>
                                 <div class="space-y-2 text-sm text-muted-foreground">
                                     <p>{{ call.summary ?? 'Aucun résumé disponible.' }}</p>

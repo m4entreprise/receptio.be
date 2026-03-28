@@ -456,6 +456,7 @@ class BackofficeController extends Controller
             'webhooks' => [
                 'incoming' => route('webhooks.twilio.voice.incoming', absolute: true),
                 'menu' => route('webhooks.twilio.voice.menu', absolute: true),
+                'status' => route('webhooks.twilio.voice.status', absolute: true),
                 'recording' => route('webhooks.twilio.voice.recording', absolute: true),
                 'ping' => route('webhooks.twilio.voice.ping', absolute: true),
             ],
@@ -464,6 +465,10 @@ class BackofficeController extends Controller
 
     private function mapCall(Call $call): array
     {
+        $durationSeconds = data_get($call->metadata, 'call_duration_seconds')
+            ?? data_get($call->metadata, 'dial_call_duration_seconds')
+            ?? ($call->started_at && $call->ended_at ? $call->started_at->diffInSeconds($call->ended_at) : null);
+
         return [
             'id' => $call->id,
             'external_sid' => $call->external_sid,
@@ -476,7 +481,7 @@ class BackofficeController extends Controller
             'phone_label' => $call->phoneNumber?->label,
             'started_at' => $call->started_at?->toIso8601String(),
             'ended_at' => $call->ended_at?->toIso8601String(),
-            'duration_seconds' => $call->started_at && $call->ended_at ? $call->started_at->diffInSeconds($call->ended_at) : null,
+            'duration_seconds' => is_numeric($durationSeconds) ? (int) $durationSeconds : null,
             'summary' => $call->summary,
             'message' => $call->message ? [
                 'caller_name' => $call->message->caller_name,
@@ -490,10 +495,18 @@ class BackofficeController extends Controller
     private function statusLabel(string $status): string
     {
         return match ($status) {
+            'received' => 'Reçu',
+            'menu_offered' => 'Menu proposé',
+            'transferring' => 'Transfert en cours',
+            'transferred' => 'Transféré',
+            'voicemail_prompted' => 'Messagerie proposée',
             'voicemail_received' => 'Message reçu',
             'after_hours' => 'Hors horaires',
             'in_progress' => 'En cours',
             'completed' => 'Terminé',
+            'failed' => 'Échec',
+            'no_answer' => 'Sans réponse',
+            'busy' => 'Occupé',
             default => Str::headline(str_replace('_', ' ', $status)),
         };
     }
@@ -504,6 +517,9 @@ class BackofficeController extends Controller
             'voicemail_received' => 'warning',
             'after_hours' => 'info',
             'completed' => 'success',
+            'transferred' => 'success',
+            'busy', 'failed', 'no_answer' => 'warning',
+            'transferring', 'in_progress' => 'info',
             default => 'default',
         };
     }

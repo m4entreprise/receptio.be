@@ -31,6 +31,7 @@ interface Props {
     webhooks: {
         incoming: string;
         menu: string;
+        status: string;
         recording: string;
         ping: string;
     };
@@ -135,6 +136,10 @@ const formatDate = (value: string | null) => {
                         <div class="rounded-[1.5rem] border border-border/60 p-4">
                             <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Menu</p>
                             <p class="mt-2 break-all font-mono text-sm">{{ webhooks.menu }}</p>
+                        </div>
+                        <div class="rounded-[1.5rem] border border-border/60 p-4">
+                            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Status</p>
+                            <p class="mt-2 break-all font-mono text-sm">{{ webhooks.status }}</p>
                         </div>
                         <div class="rounded-[1.5rem] border border-border/60 p-4">
                             <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Recording</p>

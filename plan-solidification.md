@@ -168,6 +168,32 @@ Le webhook entrant dit qu'un appel a commencé, mais pas toujours comment il s'e
 - un appel non abouti a un statut identifiable
 - le dashboard reflète l'état réel Twilio
 
+### État d'avancement
+
+- **implémenté côté application Laravel**
+- route disponible : `/webhooks/twilio/voice/status`
+- mise à jour des `Call` en fonction de `CallStatus` et `DialCallStatus`
+- stockage de la durée réelle et des derniers événements Twilio dans `metadata`
+- affichage du statut final et de la durée réelle dans le dashboard
+
+### Reste à faire côté Twilio
+ 
+ - ouvrir la configuration du numéro Twilio actif dans la console
+ - conserver le webhook voix principal sur `POST /webhooks/twilio/voice/incoming`
+ - configurer les **Status Callbacks** du numéro pour pointer vers `POST /webhooks/twilio/voice/status`
+ - demander les événements de progression d'appel utiles :
+  - `initiated`
+  - `ringing`
+  - `answered`
+  - `completed`
+ - noter que le callback de résultat du transfert via `<Dial>` est déjà injecté par l'application dans le TwiML et ne demande pas de configuration manuelle supplémentaire dans Twilio pour cette partie
+ - vérifier que l'URL publique utilisée par Twilio est bien celle exposée en production
+ - réaliser un appel de test réel et vérifier dans le dashboard :
+  - statut final
+  - durée
+  - `ended_at`
+  - cause d'échec si transfert non abouti
+
 ---
 
 ## Étape 1.3 — Gérer les échecs de transfert
@@ -555,7 +581,7 @@ Passer d'un produit qui fonctionne à un produit que l'on peut vendre sereinemen
 
 # Recommandation immédiate
 
-Le prochain chantier à implémenter en premier est :
+Le chantier qui vient d'être implémenté en premier est :
 
 ## Status callbacks Twilio
 
@@ -572,6 +598,12 @@ Le prochain chantier à implémenter en premier est :
 - durées réelles
 - échecs de transfert visibles
 - meilleure boîte de traitement
+
+### Statut actuel
+
+- **backend implémenté**
+- **dashboard adapté**
+- **configuration Twilio encore à terminer dans la console**
 
 ---
 
@@ -602,11 +634,19 @@ Le produit peut être considéré comme solide quand :
 
 ## Étape suivante concrète
 
+Terminer et valider :
+
+- configuration Twilio des status callbacks sur le numéro actif
+- test d'appel réel avec validation du statut final
+- vérification du comportement sur transfert réussi, occupé et sans réponse
+
+## Ensuite
+
 Implémenter :
 
-- endpoint Twilio status callback
-- mise à jour des `Call`
-- affichage du statut final et de la durée réelle dans le dashboard
+- fallback messagerie sur échec de transfert
+- enregistrement explicite de la cause d'échec dans les métadonnées
+- restitution de cet échec avant fallback dans le dashboard
 
 ## Une fois cela terminé
 

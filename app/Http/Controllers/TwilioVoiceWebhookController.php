@@ -31,7 +31,7 @@ class TwilioVoiceWebhookController extends Controller
                 'tenant_id' => $tenant->id,
                 'phone_number_id' => $phoneNumber?->id,
                 'direction' => 'inbound',
-                'status' => 'in_progress',
+                'status' => 'received',
                 'from_number' => $request->string('From')->toString(),
                 'to_number' => $request->string('To')->toString(),
                 'started_at' => now(),
@@ -49,11 +49,15 @@ class TwilioVoiceWebhookController extends Controller
         }
 
         if (blank($agentConfig->transfer_phone_number)) {
+            $call->update(['status' => 'voicemail_prompted']);
+
             return $this->xmlResponse($this->buildTwiml([
                 $this->say($agentConfig->welcome_message ?: "Bonjour, vous êtes bien chez {$tenant->name}. Laissez-nous un message après le bip."),
                 $this->record(route('webhooks.twilio.voice.recording', absolute: true)),
             ]));
         }
+
+        $call->update(['status' => 'menu_offered']);
 
         return $this->xmlResponse($this->buildTwiml([
             $this->gather(
@@ -79,7 +83,7 @@ class TwilioVoiceWebhookController extends Controller
 
             return $this->xmlResponse($this->buildTwiml([
                 '<Say language="fr-BE">Nous vous transférons immédiatement.</Say>',
-                '<Dial>' . e($agentConfig->transfer_phone_number) . '</Dial>',
+                '<Dial action="' . e(route('webhooks.twilio.voice.status', absolute: true)) . '" method="POST">' . e($agentConfig->transfer_phone_number) . '</Dial>',
             ]));
         }
 
@@ -112,6 +116,10 @@ class TwilioVoiceWebhookController extends Controller
                 'status' => 'voicemail_received',
                 'ended_at' => now(),
                 'summary' => 'Message vocal reçu depuis le webhook Twilio.',
+                'metadata' => $this->mergeMetadata($call, $this->filterNullValues([
+                    'recording_url' => $request->string('RecordingUrl')->toString() ?: null,
+                    'recording_duration_seconds' => $this->requestInteger($request, 'RecordingDuration'),
+                ])),
             ]);
 
             $notificationEmail = $call->tenant->agentConfig?->notification_email;
@@ -128,6 +136,59 @@ class TwilioVoiceWebhookController extends Controller
             '<Say language="fr-BE">Merci. Votre message a bien été enregistré. Au revoir.</Say>',
             '<Hangup/>',
         ]));
+    }
+
+    public function status(Request $request): Response
+    {
+        $call = Call::where('external_sid', $request->string('CallSid')->toString())->first()
+            ?? Call::where('external_sid', $request->string('ParentCallSid')->toString())->first();
+
+        if ($call) {
+            $status = $this->resolveCallbackStatus($call, $request);
+            $callDuration = $this->requestInteger($request, 'CallDuration');
+            $dialCallDuration = $this->requestInteger($request, 'DialCallDuration');
+            $statusEvent = $this->filterNullValues([
+                'received_at' => now()->toIso8601String(),
+                'call_status' => $request->string('CallStatus')->toString() ?: null,
+                'call_duration_seconds' => $callDuration,
+                'dial_call_status' => $request->string('DialCallStatus')->toString() ?: null,
+                'dial_call_duration_seconds' => $dialCallDuration,
+                'dial_call_sid' => $request->string('DialCallSid')->toString() ?: null,
+                'callback_source' => $request->string('CallbackSource')->toString() ?: null,
+                'sequence_number' => $request->input('SequenceNumber'),
+            ]);
+            $metadata = $this->mergeMetadata($call, [
+                'last_status_callback' => $statusEvent,
+                'status_events' => array_values(array_slice([
+                    ...collect(data_get($call->metadata, 'status_events', []))->filter(fn ($event) => is_array($event))->all(),
+                    $statusEvent,
+                ], -10)),
+            ]);
+
+            if ($callDuration !== null) {
+                $metadata['call_duration_seconds'] = $callDuration;
+            }
+
+            if ($dialCallDuration !== null) {
+                $metadata['dial_call_duration_seconds'] = $dialCallDuration;
+            }
+
+            if (filled($request->string('CallStatus')->toString())) {
+                $metadata['last_twilio_call_status'] = $request->string('CallStatus')->toString();
+            }
+
+            if (filled($request->string('DialCallStatus')->toString())) {
+                $metadata['last_twilio_dial_call_status'] = $request->string('DialCallStatus')->toString();
+            }
+
+            $call->update([
+                'status' => $status,
+                'ended_at' => $this->isTerminalStatus($status) ? ($call->ended_at ?? now()) : $call->ended_at,
+                'metadata' => $metadata,
+            ]);
+        }
+
+        return response('', 204);
     }
 
     public function ping(Request $request): Response
@@ -156,6 +217,66 @@ class TwilioVoiceWebhookController extends Controller
     private function say(string $message): string
     {
         return '<Say language="fr-BE">' . e($message) . '</Say>';
+    }
+
+    private function resolveCallbackStatus(Call $call, Request $request): string
+    {
+        $dialStatus = $request->string('DialCallStatus')->toString();
+
+        if ($dialStatus !== '') {
+            return match ($dialStatus) {
+                'completed', 'answered' => 'transferred',
+                'busy' => 'busy',
+                'no-answer' => 'no_answer',
+                'failed', 'canceled' => 'failed',
+                default => $call->status,
+            };
+        }
+
+        $callStatus = $request->string('CallStatus')->toString();
+
+        return match ($callStatus) {
+            'queued', 'initiated', 'ringing' => $call->status === 'received' ? 'received' : $call->status,
+            'in-progress' => in_array($call->status, ['received', 'in_progress'], true) ? 'in_progress' : $call->status,
+            'busy' => 'busy',
+            'no-answer' => 'no_answer',
+            'failed', 'canceled' => 'failed',
+            'completed' => $this->completedStatusFor($call),
+            default => $call->status,
+        };
+    }
+
+    private function completedStatusFor(Call $call): string
+    {
+        return in_array($call->status, ['after_hours', 'transferred', 'voicemail_received', 'busy', 'no_answer', 'failed'], true)
+            ? $call->status
+            : 'completed';
+    }
+
+    private function isTerminalStatus(string $status): bool
+    {
+        return in_array($status, ['after_hours', 'busy', 'completed', 'failed', 'no_answer', 'transferred', 'voicemail_received'], true);
+    }
+
+    private function mergeMetadata(Call $call, array $attributes): array
+    {
+        return array_merge($call->metadata ?? [], $attributes);
+    }
+
+    private function requestInteger(Request $request, string $key): ?int
+    {
+        if (! $request->has($key) || $request->input($key) === '') {
+            return null;
+        }
+
+        $value = $request->input($key);
+
+        return is_numeric($value) ? (int) $value : null;
+    }
+
+    private function filterNullValues(array $data): array
+    {
+        return array_filter($data, fn ($value) => $value !== null && $value !== '');
     }
 
     private function resolvePhoneNumber(string $phoneNumber): ?PhoneNumber

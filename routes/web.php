@@ -28,6 +28,7 @@ Route::prefix('webhooks/twilio/voice')
     ->group(function () {
         Route::post('incoming', [TwilioVoiceWebhookController::class, 'incoming'])->name('webhooks.twilio.voice.incoming');
         Route::post('menu', [TwilioVoiceWebhookController::class, 'menu'])->name('webhooks.twilio.voice.menu');
+        Route::post('status', [TwilioVoiceWebhookController::class, 'status'])->name('webhooks.twilio.voice.status');
         Route::post('recording', [TwilioVoiceWebhookController::class, 'recording'])->name('webhooks.twilio.voice.recording');
         Route::post('ping', [TwilioVoiceWebhookController::class, 'ping'])->name('webhooks.twilio.voice.ping');
     });
