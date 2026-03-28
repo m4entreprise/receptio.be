@@ -119,6 +119,60 @@ test('internal turn persistence rebuilds the call transcript', function () {
         ->and($call->conversation_status)->toBe('active');
 });
 
+test('internal resolution persistence stores the conversation outcome for the backoffice', function () {
+    config()->set('services.realtime.internal_token', 'test-internal-token');
+
+    [$tenant, $agentConfig, $phoneNumber] = createConversationWorkspace();
+
+    $call = Call::create([
+        'tenant_id' => $tenant->id,
+        'phone_number_id' => $phoneNumber->id,
+        'external_sid' => 'CA_RESOLUTION',
+        'direction' => 'inbound',
+        'status' => 'in_progress',
+        'channel' => Call::CHANNEL_CONVERSATION_AI,
+        'conversation_status' => 'active',
+        'from_number' => '+32471234567',
+        'to_number' => '+3220000000',
+        'started_at' => now()->subSeconds(15),
+    ]);
+
+    CallTurn::create([
+        'call_id' => $call->id,
+        'speaker' => 'caller',
+        'text' => 'Pouvez-vous me donner vos horaires ?',
+        'sequence' => 1,
+    ]);
+
+    CallTurn::create([
+        'call_id' => $call->id,
+        'speaker' => 'assistant',
+        'text' => 'Nous sommes ouverts du lundi au vendredi de 9h a 18h.',
+        'sequence' => 2,
+    ]);
+
+    $response = $this
+        ->withHeader('Authorization', 'Bearer test-internal-token')
+        ->post(route('internal.realtime.calls.resolution.store', $call->external_sid), [
+            'resolution_type' => 'answered',
+            'summary' => 'Le caller a obtenu les horaires d ouverture.',
+            'conversation_status' => 'completed',
+            'meta' => ['source' => 'sidecar'],
+        ]);
+
+    $response->assertOk();
+
+    $call->refresh();
+
+    expect($call->status)->toBe('completed')
+        ->and($call->resolution_type)->toBe('answered')
+        ->and($call->conversation_status)->toBe('completed')
+        ->and($call->conversation_summary)->toBe('Le caller a obtenu les horaires d ouverture.')
+        ->and($call->summary)->toBe('Le caller a obtenu les horaires d ouverture.')
+        ->and($call->transcript)->toContain('Caller: Pouvez-vous me donner vos horaires ?')
+        ->and(data_get($call->metadata, 'conversation_resolution.meta.source'))->toBe('sidecar');
+});
+
 test('incoming webhook opens twilio conversation relay when the runtime is enabled', function () {
     config()->set('services.twilio.conversation_relay_url', 'wss://relay.example/ws');
     Carbon::setTestNow('2026-03-24 10:30:00');
@@ -214,4 +268,43 @@ test('conversation relay failure falls back to voicemail', function () {
     expect($call->status)->toBe('voicemail_prompted')
         ->and($call->conversation_status)->toBe('fallback_requested')
         ->and(data_get($call->metadata, 'fallback_target'))->toBe('voicemail');
+});
+
+test('conversation relay fallback can play a guided voicemail instruction from the sidecar', function () {
+    [$tenant, $agentConfig, $phoneNumber] = createConversationWorkspace();
+
+    $call = Call::create([
+        'tenant_id' => $tenant->id,
+        'phone_number_id' => $phoneNumber->id,
+        'external_sid' => 'CA_CONVERSATION_GUIDED_VM',
+        'direction' => 'inbound',
+        'status' => 'in_progress',
+        'channel' => Call::CHANNEL_CONVERSATION_AI,
+        'conversation_status' => 'active',
+        'from_number' => '+32479990001',
+        'to_number' => '+3220000000',
+        'started_at' => now()->subSeconds(18),
+    ]);
+
+    $response = $this->post(route('webhooks.twilio.voice.status'), [
+        'CallSid' => 'CA_CONVERSATION_GUIDED_VM',
+        'SessionStatus' => 'ended',
+        'SessionId' => 'VX_GUIDED_VM',
+        'HandoffData' => json_encode([
+            'action' => 'fallback_voicemail',
+            'reason' => 'tenant_policy_escalation',
+            'summary' => 'Le caller doit laisser un message pour un devis.',
+            'spoken_message' => 'Merci de laisser votre nom, votre numero et l objet de votre demande apres le bip.',
+        ], JSON_THROW_ON_ERROR),
+    ]);
+
+    $response->assertOk();
+    $response->assertSee('Merci de laisser votre nom, votre numero et l objet de votre demande apres le bip.', false);
+
+    $call->refresh();
+
+    expect($call->status)->toBe('voicemail_prompted')
+        ->and($call->conversation_status)->toBe('fallback_requested')
+        ->and($call->escalation_reason)->toBe('tenant_policy_escalation')
+        ->and($call->summary)->toBe('Le caller doit laisser un message pour un devis.');
 });

@@ -180,14 +180,19 @@ class RealtimeCallController extends Controller
             'conversation_summary' => $validated['summary'] ?? $call->conversation_summary,
             'summary' => $validated['summary'] ?? $call->summary,
             'escalation_reason' => $validated['reason'] ?? $call->escalation_reason,
-            'metadata' => array_merge($call->metadata ?? [], array_filter([
-                'conversation_transfer' => [
+            'metadata' => array_merge($call->metadata ?? [], [
+                'conversation_transfer' => array_filter([
+                    ...((array) data_get($call->metadata, 'conversation_transfer', [])),
                     'requested_at' => now()->toIso8601String(),
                     'target_phone_number' => $targetPhoneNumber,
                     'reason' => $validated['reason'] ?? null,
-                    'meta' => $validated['meta'] ?? null,
-                ],
-            ])),
+                    'summary' => $validated['summary'] ?? null,
+                    'meta' => array_merge(
+                        (array) data_get($call->metadata, 'conversation_transfer.meta', []),
+                        $validated['meta'] ?? [],
+                    ) ?: null,
+                ], fn ($value) => $value !== null),
+            ]),
         ]);
 
         $this->activityLogger->log(

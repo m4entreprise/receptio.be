@@ -6,6 +6,40 @@ Faire de ReceptioAI un **receptionniste conversationnel** capable de comprendre 
 
 ---
 
+## Etat du depot au 2026-03-28
+
+### Ce qui est deja implemente
+
+- webhook Twilio entrant avec bascule `ConversationRelay` pendant les horaires d'ouverture
+- endpoints internes Laravel proteges pour `bootstrap`, `turns`, `resolution`, `transfer` et `fallback`
+- table `call_turns` et enrichissements conversationnels sur `calls` et `agent_configs`
+- backoffice conversationnel avec transcript, resolution, motifs d'escalade et evenements de session
+- sidecar Node minimal `ConversationRelay` avec state machine heuristique, persistance des tours et handoff Twilio
+- exploitation initiale de `conversation_prompt` via directives simples d'escalade et de messagerie
+- politiques tenant plus riches dans `conversation_prompt` avec regles structurees et messages dedies d'escalade ou de clarification
+- grounding FAQ reel dans le sidecar avec support de FAQ en blocs question/reponse et candidats pertinents injectes au moteur LLM
+- fallback vocal guide quand le sidecar demande une prise de message contextualisee
+- fallback vocal guide aussi apres echec reel d'un transfert humain `Dial`
+- fallback vocal post-transfert plus contextualise a partir du resume de transfert quand aucun message explicite n'est fourni
+- moteur de decision OpenAI optionnel dans le sidecar avec fallback heuristique si non configure ou en erreur
+- traces sidecar plus fiables avec distinction explicite entre decisions heuristiques, OpenAI et fallback heuristique
+- timeout OpenAI configurable et metadonnees de decision persistables pour diagnostiquer latence, timeout et fallback
+- statistiques conversationnelles de resolution exposees dans le dashboard backoffice
+- analytics conversationnelles fines exposees dans le dashboard backoffice sur les tours, clarifications, usage OpenAI et escalades
+- analytics de fiabilite LLM exposees dans le dashboard backoffice sur tentatives OpenAI, succes, timeouts, latence et fallbacks
+- tests Laravel pour runtime conversationnel et backoffice
+- tests Node locaux pour la politique conversationnelle et la session sidecar
+
+### Ce qui reste ouvert
+
+- grounding metier plus fin via `conversation_prompt` au-dela de directives simples
+- evaluation et enrichissement des politiques d'escalade par tenant sur cas metier reels
+- evaluation de la qualite LLM sur cas metier reels et durcissement complementaire de l'integration OpenAI
+- analytics conversationnelles historiques et plus approfondies au-dela du dashboard de synthese
+- tests de bout en bout sur appel Twilio reel
+
+---
+
 ## Positionnement V1
 
 ### Cible produit
@@ -180,27 +214,28 @@ Chaque appel conversationnel doit laisser :
 
 ## Phase 1 - Runtime conversationnel V1
 
-- integrer Twilio ConversationRelay
-- ajouter le sidecar Node
-- bootstrap call/tenant
-- persistance des tours
-- gestion tour par tour
-- transfert et fallback
+- [x] integrer Twilio ConversationRelay
+- [x] ajouter le sidecar Node
+- [x] bootstrap call/tenant
+- [x] persistance des tours
+- [x] gestion tour par tour
+- [x] transfert et fallback
 
 ## Phase 2 - Grounding metier
 
-- brancher reellement `faq_content`
-- ajouter prompts par tenant
-- regler les politiques d'escalade
-- guider la prise de message quand le transfert echoue
+ - [x] brancher reellement `faq_content`
+- [~] ajouter prompts par tenant
+- [~] regler les politiques d'escalade
+- [x] guider la prise de message quand le transfert echoue
+- [~] brancher un moteur LLM optionnel avec fallback heuristique
 
 ## Phase 3 - Backoffice conversationnel
 
-- vue transcript par appel
-- affichage de la resolution
-- motifs de transfert
-- incidents de conversation
-- statistiques de resolution
+- [x] vue transcript par appel
+- [x] affichage de la resolution
+- [x] motifs de transfert
+- [x] incidents de conversation
+- [x] statistiques de resolution
 
 ## Phase 4 - Optimisation produit
 

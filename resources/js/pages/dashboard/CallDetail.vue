@@ -26,7 +26,29 @@ interface Props {
     activityFeed: ActivityItem[];
 }
 
-defineProps<Props>();
+const props = defineProps<Props>();
+
+const speakerLabel = (speaker: string) =>
+    ({
+        caller: 'Appelant',
+        assistant: 'Assistant',
+        system: 'Système',
+    })[speaker] ?? speaker;
+
+const speakerTone = (speaker: string) =>
+    ({
+        caller: 'neutral',
+        assistant: 'info',
+        system: 'default',
+    })[speaker] ?? 'default';
+
+const hasConversationTrace =
+    props.call.channel === 'conversation_ai' ||
+    props.call.turns.length > 0 ||
+    props.call.conversation_relay_events.length > 0 ||
+    props.call.transcript !== null ||
+    props.call.conversation_status !== null ||
+    props.call.resolution_type !== null;
 </script>
 
 <template>
@@ -76,6 +98,17 @@ defineProps<Props>();
                         <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
                             <p class="font-medium text-foreground">Résumé</p>
                             <p class="mt-2 leading-6">{{ call.summary ?? 'Aucun résumé disponible.' }}</p>
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                <ToneBadge v-if="call.channel_label" :label="call.channel_label" tone="neutral" />
+                                <ToneBadge v-if="call.conversation_status_label" :label="call.conversation_status_label" tone="info" />
+                                <ToneBadge v-if="call.resolution_label" :label="call.resolution_label" :tone="call.tone" />
+                            </div>
+                            <p v-if="call.conversation_summary" class="mt-3 text-xs leading-5">
+                                Résumé conversationnel: {{ call.conversation_summary }}
+                            </p>
+                            <p v-if="call.escalation_reason" class="mt-1 text-xs leading-5 text-amber-700">
+                                Motif d’escalade: {{ call.escalation_reason }}
+                            </p>
                             <p
                                 v-if="call.transfer_failure_status && call.fallback_target === 'voicemail'"
                                 class="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
@@ -173,6 +206,90 @@ defineProps<Props>();
                     </CardContent>
                 </Card>
             </div>
+
+            <Card
+                v-if="hasConversationTrace"
+                class="border-border/70 bg-background/95 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.32)]"
+            >
+                <CardHeader>
+                    <CardDescription>Runtime conversationnel</CardDescription>
+                    <CardTitle>Transcript et événements IA</CardTitle>
+                </CardHeader>
+                <CardContent class="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+                    <div class="space-y-4">
+                        <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
+                            <p class="font-medium text-foreground">Transcript consolidé</p>
+                            <pre
+                                v-if="call.transcript"
+                                class="mt-3 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-muted-foreground"
+                            >{{ call.transcript }}</pre>
+                            <p v-else class="mt-3">Aucun transcript consolidé disponible.</p>
+                        </div>
+
+                        <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
+                            <p class="font-medium text-foreground">Tours persistés</p>
+                            <div v-if="call.turns.length > 0" class="mt-3 space-y-3">
+                                <div
+                                    v-for="turn in call.turns"
+                                    :key="turn.id"
+                                    class="rounded-2xl border border-border/60 bg-muted/15 px-4 py-4"
+                                >
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <ToneBadge :label="speakerLabel(turn.speaker)" :tone="speakerTone(turn.speaker)" />
+                                        <ToneBadge :label="`#${turn.sequence}`" tone="neutral" />
+                                        <ToneBadge
+                                            v-if="turn.confidence !== null"
+                                            :label="`${Math.round(turn.confidence * 100)}%`"
+                                            tone="neutral"
+                                        />
+                                    </div>
+                                    <p class="mt-3 leading-6 text-foreground">{{ turn.text }}</p>
+                                    <p v-if="turn.created_at" class="mt-2 text-xs">
+                                        {{ new Date(turn.created_at).toLocaleString('fr-BE') }}
+                                    </p>
+                                </div>
+                            </div>
+                            <p v-else class="mt-3">Aucun tour conversationnel n’a encore été persisté.</p>
+                        </div>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
+                            <p class="font-medium text-foreground">Décision de sortie</p>
+                            <p class="mt-2">Canal: {{ call.channel_label ?? 'n/a' }}</p>
+                            <p class="mt-1">Statut conversationnel: {{ call.conversation_status_label ?? 'n/a' }}</p>
+                            <p class="mt-1">Résolution: {{ call.resolution_label ?? 'n/a' }}</p>
+                            <p class="mt-1">Fallback: {{ call.fallback_target ?? 'Aucun' }}</p>
+                            <p v-if="call.escalation_reason" class="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                                Escalade: {{ call.escalation_reason }}
+                            </p>
+                        </div>
+
+                        <div class="rounded-2xl border border-border/60 p-4 text-sm text-muted-foreground">
+                            <p class="font-medium text-foreground">Événements ConversationRelay</p>
+                            <div v-if="call.conversation_relay_events.length > 0" class="mt-3 space-y-3">
+                                <div
+                                    v-for="(event, index) in call.conversation_relay_events"
+                                    :key="`${call.id}-relay-${index}`"
+                                    class="rounded-2xl bg-muted/20 px-3 py-3"
+                                >
+                                    <p>{{ event.received_at ? new Date(event.received_at).toLocaleString('fr-BE') : 'Horodatage inconnu' }}</p>
+                                    <p class="mt-1">Session: {{ event.session_status ?? 'n/a' }}</p>
+                                    <p v-if="event.handoff_action" class="mt-1">Action: {{ event.handoff_action }}</p>
+                                    <p v-if="event.handoff_reason" class="mt-1">Motif: {{ event.handoff_reason }}</p>
+                                    <p v-if="event.handoff_target_phone_number" class="mt-1">
+                                        Cible: {{ event.handoff_target_phone_number }}
+                                    </p>
+                                    <p v-if="event.handoff_summary" class="mt-1 leading-5">
+                                        Résumé: {{ event.handoff_summary }}
+                                    </p>
+                                </div>
+                            </div>
+                            <p v-else class="mt-3">Aucun événement de session conversationnelle enregistré.</p>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
 
             <Card class="border-border/70 bg-background/95 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.32)]">
                 <CardHeader>

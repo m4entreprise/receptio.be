@@ -19,6 +19,13 @@ export interface WorkspaceSummary {
     configuration_score: number;
 }
 
+export interface ConversationMetric {
+    label: string;
+    value: number | string;
+    description: string;
+    tone: Tone;
+}
+
 export interface ServiceStatus {
     label: string;
     tone: Tone;
@@ -87,6 +94,27 @@ export interface CallStatusEvent {
     sequence_number: string | number | null;
 }
 
+export interface ConversationRelayEvent {
+    received_at: string | null;
+    session_id: string | null;
+    session_status: string | null;
+    session_duration_seconds: number | null;
+    handoff_action: string | null;
+    handoff_reason: string | null;
+    handoff_summary: string | null;
+    handoff_target_phone_number: string | null;
+}
+
+export interface ConversationTurn {
+    id: number;
+    speaker: string;
+    text: string;
+    confidence: number | null;
+    sequence: number;
+    meta: Record<string, unknown> | null;
+    created_at: string | null;
+}
+
 export interface CallItem {
     id: number;
     external_sid: string | null;
@@ -94,6 +122,12 @@ export interface CallItem {
     status_label: string;
     tone: Tone;
     direction: string | null;
+    channel: string | null;
+    channel_label: string | null;
+    conversation_status: string | null;
+    conversation_status_label: string | null;
+    resolution_type: string | null;
+    resolution_label: string | null;
     from_number: string | null;
     to_number: string | null;
     phone_label: string | null;
@@ -101,9 +135,14 @@ export interface CallItem {
     ended_at: string | null;
     duration_seconds: number | null;
     summary: string | null;
+    conversation_summary: string | null;
+    escalation_reason: string | null;
+    transcript: string | null;
     transfer_failure_status: string | null;
     fallback_target: string | null;
     recent_status_events: CallStatusEvent[];
+    conversation_relay_events: ConversationRelayEvent[];
+    turns: ConversationTurn[];
     message: CallMessage | null;
 }
 

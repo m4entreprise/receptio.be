@@ -152,6 +152,90 @@ test('twilio status callback falls back to voicemail when transfer is busy', fun
         ->and($call->summary)->toContain('Bascule vers messagerie');
 });
 
+test('twilio transfer failure fallback can reuse the guided voicemail message from conversation transfer metadata', function () {
+    [$tenant, $phoneNumber] = createTwilioWorkspace();
+
+    $call = Call::create([
+        'tenant_id' => $tenant->id,
+        'phone_number_id' => $phoneNumber->id,
+        'external_sid' => 'CA_TRANSFER_BUSY_GUIDED',
+        'direction' => 'inbound',
+        'status' => 'transferring',
+        'from_number' => '+32470001112',
+        'to_number' => '+3220000000',
+        'started_at' => now()->subSeconds(40),
+        'metadata' => [
+            'conversation_transfer' => [
+                'requested_at' => now()->subSeconds(20)->toIso8601String(),
+                'target_phone_number' => '+32470000000',
+                'reason' => 'tenant_policy_escalation',
+                'meta' => [
+                    'fallback_spoken_message' => 'Merci de laisser votre nom, votre numero et la reference de votre demande apres le bip.',
+                ],
+            ],
+        ],
+    ]);
+
+    $response = $this->post(route('webhooks.twilio.voice.status'), [
+        'CallSid' => 'CA_TRANSFER_BUSY_GUIDED',
+        'DialCallStatus' => 'busy',
+        'DialCallDuration' => '0',
+        'DialCallSid' => 'CA_TRANSFER_BUSY_GUIDED_CHILD',
+        'CallStatus' => 'in-progress',
+    ]);
+
+    $response->assertOk();
+    $response->assertSee('Merci de laisser votre nom, votre numero et la reference de votre demande apres le bip.', false);
+
+    $call->refresh();
+
+    expect($call->status)->toBe('voicemail_prompted')
+        ->and(data_get($call->metadata, 'transfer_failure_status'))->toBe('busy')
+        ->and(data_get($call->metadata, 'fallback_target'))->toBe('voicemail');
+});
+
+test('twilio transfer failure fallback can derive a contextual voicemail message from transfer summary', function () {
+    [$tenant, $phoneNumber] = createTwilioWorkspace();
+
+    $call = Call::create([
+        'tenant_id' => $tenant->id,
+        'phone_number_id' => $phoneNumber->id,
+        'external_sid' => 'CA_TRANSFER_BUSY_CONTEXTUAL',
+        'direction' => 'inbound',
+        'status' => 'transferring',
+        'from_number' => '+32470001113',
+        'to_number' => '+3220000000',
+        'started_at' => now()->subSeconds(40),
+        'conversation_summary' => 'Le caller a demande un devis urgent pour demain matin.',
+        'metadata' => [
+            'conversation_transfer' => [
+                'requested_at' => now()->subSeconds(20)->toIso8601String(),
+                'target_phone_number' => '+32470000000',
+                'reason' => 'tenant_policy_escalation',
+                'summary' => 'Le caller a demande un devis urgent pour demain matin.',
+                'meta' => [],
+            ],
+        ],
+    ]);
+
+    $response = $this->post(route('webhooks.twilio.voice.status'), [
+        'CallSid' => 'CA_TRANSFER_BUSY_CONTEXTUAL',
+        'DialCallStatus' => 'busy',
+        'DialCallDuration' => '0',
+        'DialCallSid' => 'CA_TRANSFER_BUSY_CONTEXTUAL_CHILD',
+        'CallStatus' => 'in-progress',
+    ]);
+
+    $response->assertOk();
+    $response->assertSee('votre demande concernant un devis urgent pour demain matin', false);
+
+    $call->refresh();
+
+    expect($call->status)->toBe('voicemail_prompted')
+        ->and(data_get($call->metadata, 'transfer_failure_fallback_message'))->toContain('devis urgent pour demain matin')
+        ->and(data_get($call->metadata, 'conversation_transfer.meta.effective_fallback_spoken_message'))->toContain('devis urgent pour demain matin');
+});
+
 test('calls dashboard exposes transfer failure metadata after voicemail fallback', function () {
     [$tenant, $phoneNumber, $user] = createTwilioWorkspace();
 

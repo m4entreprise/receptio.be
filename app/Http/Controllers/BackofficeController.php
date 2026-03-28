@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ActivityLog;
 use App\Models\Call;
 use App\Models\CallMessage;
+use App\Models\CallTurn;
 use App\Models\Tenant;
 use App\Support\TenantResolver;
 use Illuminate\Database\Eloquent\Builder;
@@ -56,6 +57,9 @@ class BackofficeController extends Controller
                 'description' => 'Supervise l’activité, la qualité de service et les réglages clés depuis un cockpit centralisé.',
             ],
             'recentCalls' => $recentCalls,
+            'conversationMetrics' => $context['conversationMetrics'],
+            'conversationAnalytics' => $context['conversationAnalytics'],
+            'conversationReliabilityMetrics' => $context['conversationReliabilityMetrics'],
             'activityFeed' => $context['activityFeed'],
             'alerts' => $context['alerts'],
             'onboarding' => $context['onboarding'],
@@ -124,7 +128,7 @@ class BackofficeController extends Controller
         abort_unless($tenant, 404);
 
         $callRecord = $tenant->calls()
-            ->with(['message.assignedTo', 'message.handledBy', 'phoneNumber'])
+            ->with(['message.assignedTo', 'message.handledBy', 'phoneNumber', 'turns'])
             ->whereKey($call)
             ->firstOrFail();
 
@@ -384,6 +388,91 @@ class BackofficeController extends Controller
         $totalCalls = $tenant?->calls()->count() ?? 0;
         $voicemailCalls = $tenant?->calls()->where('status', 'voicemail_received')->count() ?? 0;
         $afterHoursCalls = $tenant?->calls()->where('status', 'after_hours')->count() ?? 0;
+        $conversationCallsQuery = $tenant?->calls()->where('channel', Call::CHANNEL_CONVERSATION_AI);
+        $conversationCallsCount = $conversationCallsQuery ? (clone $conversationCallsQuery)->count() : 0;
+        $conversationAnsweredCount = $conversationCallsQuery ? (clone $conversationCallsQuery)->where('resolution_type', 'answered')->count() : 0;
+        $conversationTransferredCount = $conversationCallsQuery ? (clone $conversationCallsQuery)->where('resolution_type', 'transferred')->count() : 0;
+        $conversationFallbackCount = $conversationCallsQuery
+            ? (clone $conversationCallsQuery)->where('conversation_status', 'fallback_requested')->count()
+            : 0;
+        $conversationResolvedCount = $conversationCallsQuery
+            ? (clone $conversationCallsQuery)->whereNotNull('resolution_type')->count()
+            : 0;
+        $conversationResolutionRate = $conversationCallsCount > 0
+            ? (int) round(($conversationResolvedCount / $conversationCallsCount) * 100)
+            : 0;
+        $conversationCallRecords = $conversationCallsQuery
+            ? (clone $conversationCallsQuery)->get(['id', 'escalation_reason', 'metadata'])
+            : collect();
+        $conversationCallIds = $conversationCallRecords->pluck('id')->filter()->values();
+        $conversationTurns = $conversationCallIds->isNotEmpty()
+            ? CallTurn::query()
+                ->whereIn('call_id', $conversationCallIds)
+                ->orderBy('sequence')
+                ->get(['call_id', 'speaker', 'meta'])
+            : collect();
+        $assistantConversationTurns = $conversationTurns
+            ->filter(fn (CallTurn $turn) => $turn->speaker === 'assistant')
+            ->values();
+        $turnsPerConversationCall = $conversationTurns->groupBy('call_id');
+        $formatAverage = static function (float $value): string {
+            if (abs($value - round($value)) < 0.05) {
+                return (string) (int) round($value);
+            }
+
+            return number_format($value, 1, '.', '');
+        };
+        $averageTurns = $conversationCallsCount > 0
+            ? $formatAverage((float) ($conversationCallIds->avg(
+                fn ($callId) => $turnsPerConversationCall->get($callId, collect())->count()
+            ) ?? 0))
+            : '0';
+        $averageClarifications = $conversationCallsCount > 0
+            ? $formatAverage((float) ($conversationCallIds->avg(
+                fn ($callId) => $turnsPerConversationCall->get($callId, collect())->filter(
+                    fn (CallTurn $turn) => $turn->speaker === 'assistant' && data_get($turn->meta, 'decision') === 'clarify'
+                )->count()
+            ) ?? 0))
+            : '0';
+        $openAiAssistedCallsCount = $turnsPerConversationCall
+            ->filter(fn ($turns) => $turns->contains(
+                fn (CallTurn $turn) => $turn->speaker === 'assistant' && data_get($turn->meta, 'source') === 'sidecar.openai'
+            ))
+            ->count();
+        $openAiUsageRate = $conversationCallsCount > 0
+            ? (int) round(($openAiAssistedCallsCount / $conversationCallsCount) * 100)
+            : 0;
+        $openAiAttemptTurns = $assistantConversationTurns
+            ->filter(fn (CallTurn $turn) => data_get($turn->meta, 'decision_provider') === 'openai' || data_get($turn->meta, 'source') === 'sidecar.openai')
+            ->values();
+        $openAiSuccessfulTurns = $openAiAttemptTurns
+            ->filter(fn (CallTurn $turn) => data_get($turn->meta, 'source') === 'sidecar.openai')
+            ->values();
+        $openAiFallbackTurns = $openAiAttemptTurns
+            ->filter(fn (CallTurn $turn) => data_get($turn->meta, 'source') === 'sidecar.heuristic_fallback')
+            ->values();
+        $openAiTimeoutTurns = $openAiAttemptTurns
+            ->filter(fn (CallTurn $turn) => data_get($turn->meta, 'decision_error_code') === 'openai_timeout')
+            ->values();
+        $openAiLatencySamples = $openAiAttemptTurns
+            ->pluck('meta')
+            ->map(fn ($meta) => data_get($meta, 'decision_latency_ms'))
+            ->filter(fn ($latency) => is_numeric($latency))
+            ->map(fn ($latency) => (float) $latency)
+            ->values();
+        $averageOpenAiLatency = $openAiLatencySamples->isNotEmpty()
+            ? (string) (int) round($openAiLatencySamples->avg())
+            : '0';
+        $openAiSuccessRate = $openAiAttemptTurns->count() > 0
+            ? (int) round(($openAiSuccessfulTurns->count() / $openAiAttemptTurns->count()) * 100)
+            : 0;
+        $topEscalationReasons = $conversationCallRecords
+            ->pluck('escalation_reason')
+            ->filter(fn ($reason) => filled($reason))
+            ->countBy()
+            ->sortDesc();
+        $topEscalationReason = $topEscalationReasons->keys()->first();
+        $topEscalationCount = $topEscalationReasons->first() ?: 0;
         $messagesWaiting = $tenant?->callMessages()->whereIn('status', self::OPEN_MESSAGE_STATUSES)->count() ?? 0;
         $lastTwilioCall = collect($calls)->first(fn (array $call) => filled($call['external_sid']));
 
@@ -431,6 +520,39 @@ class BackofficeController extends Controller
             ['name' => 'Escalade téléphonique', 'status' => filled($settings['transfer_phone_number']) ? 'Active' : 'En attente', 'tone' => 'neutral', 'description' => 'Bascule des appels vers une ligne de reprise définie par l’organisation.'],
         ];
 
+        $conversationMetrics = [
+            [
+                'label' => 'Appels IA',
+                'value' => $conversationCallsCount,
+                'description' => 'Appels passés par le runtime conversationnel.',
+                'tone' => 'info',
+            ],
+            [
+                'label' => 'Résolus sans humain',
+                'value' => $conversationAnsweredCount,
+                'description' => 'Demandes traitées sans reprise humaine.',
+                'tone' => 'success',
+            ],
+            [
+                'label' => 'Transferts IA',
+                'value' => $conversationTransferredCount,
+                'description' => 'Escalades humaines demandées ou abouties depuis l IA.',
+                'tone' => 'warning',
+            ],
+            [
+                'label' => 'Taux de résolution',
+                'value' => $conversationCallsCount > 0 ? $conversationResolutionRate.'%' : '0%',
+                'description' => 'Part des appels IA avec une résolution persistée.',
+                'tone' => $conversationResolutionRate >= 70 ? 'success' : ($conversationCallsCount > 0 ? 'warning' : 'neutral'),
+            ],
+            [
+                'label' => 'Fallbacks IA',
+                'value' => $conversationFallbackCount,
+                'description' => 'Conversations redirigées vers un flux de secours.',
+                'tone' => $conversationFallbackCount > 0 ? 'warning' : 'neutral',
+            ],
+        ];
+
         return [
             'tenant' => $tenantData,
             'tenantModel' => $tenant,
@@ -454,6 +576,67 @@ class BackofficeController extends Controller
             'alerts' => $alerts,
             'onboarding' => $onboarding,
             'integrations' => $integrations,
+            'conversationMetrics' => $conversationMetrics,
+            'conversationAnalytics' => [
+                [
+                    'label' => 'Tours moyens',
+                    'value' => $averageTurns,
+                    'description' => 'Nombre moyen de tours persistÃ©s par appel IA.',
+                    'tone' => $conversationCallsCount > 0 ? 'info' : 'neutral',
+                ],
+                [
+                    'label' => 'Clarifications moyennes',
+                    'value' => $averageClarifications,
+                    'description' => 'Nombre moyen de relances assistant avant issue de l appel.',
+                    'tone' => $averageClarifications === '0' ? 'success' : 'warning',
+                ],
+                [
+                    'label' => 'Appels avec OpenAI',
+                    'value' => $conversationCallsCount > 0 ? $openAiUsageRate.'%' : '0%',
+                    'description' => 'Part des appels IA avec au moins une decision assistant issue d OpenAI.',
+                    'tone' => $openAiUsageRate > 0 ? 'info' : 'neutral',
+                ],
+                [
+                    'label' => 'Escalade dominante',
+                    'value' => $topEscalationReason ? Str::headline(str_replace('_', ' ', $topEscalationReason)) : 'Aucune',
+                    'description' => $topEscalationReason
+                        ? 'Motif d escalade le plus frequent sur '.$topEscalationCount.' appel(s).'
+                        : 'Aucun motif d escalade dominant pour le moment.',
+                    'tone' => $topEscalationReason ? 'warning' : 'neutral',
+                ],
+            ],
+            'conversationReliabilityMetrics' => [
+                [
+                    'label' => 'Tentatives OpenAI',
+                    'value' => $openAiAttemptTurns->count(),
+                    'description' => 'Decisions assistant ayant tente un passage par OpenAI.',
+                    'tone' => $openAiAttemptTurns->isNotEmpty() ? 'info' : 'neutral',
+                ],
+                [
+                    'label' => 'Reussite OpenAI',
+                    'value' => $openAiAttemptTurns->count() > 0 ? $openAiSuccessRate.'%' : '0%',
+                    'description' => 'Part des tentatives OpenAI qui ont produit une decision sans fallback heuristique.',
+                    'tone' => $openAiSuccessRate >= 80 ? 'success' : ($openAiAttemptTurns->isNotEmpty() ? 'warning' : 'neutral'),
+                ],
+                [
+                    'label' => 'Timeouts OpenAI',
+                    'value' => $openAiTimeoutTurns->count(),
+                    'description' => 'Nombre de decisions OpenAI ayant depasse le timeout configure.',
+                    'tone' => $openAiTimeoutTurns->isNotEmpty() ? 'warning' : 'success',
+                ],
+                [
+                    'label' => 'Latence moyenne OpenAI',
+                    'value' => $openAiLatencySamples->isNotEmpty() ? $averageOpenAiLatency.' ms' : '0 ms',
+                    'description' => 'Latence moyenne mesuree sur les tentatives OpenAI persistees.',
+                    'tone' => $openAiLatencySamples->isNotEmpty() ? 'info' : 'neutral',
+                ],
+                [
+                    'label' => 'Fallbacks OpenAI',
+                    'value' => $openAiFallbackTurns->count(),
+                    'description' => 'Decisions revenues sur l heuristique apres erreur ou indisponibilite OpenAI.',
+                    'tone' => $openAiFallbackTurns->isNotEmpty() ? 'warning' : 'success',
+                ],
+            ],
             'serviceStatus' => $serviceStatus,
             'twilio' => ['last_call' => $lastTwilioCall],
             'webhooks' => [
@@ -585,6 +768,34 @@ class BackofficeController extends Controller
             ])
             ->all();
 
+        $conversationRelayEvents = collect(data_get($call->metadata, 'conversation_relay.events', []))
+            ->filter(fn ($event) => is_array($event))
+            ->take(-5)
+            ->values()
+            ->map(fn (array $event) => [
+                'received_at' => data_get($event, 'received_at'),
+                'session_id' => data_get($event, 'session_id'),
+                'session_status' => data_get($event, 'session_status'),
+                'session_duration_seconds' => is_numeric(data_get($event, 'session_duration_seconds')) ? (int) data_get($event, 'session_duration_seconds') : null,
+                'handoff_action' => data_get($event, 'handoff_data.action'),
+                'handoff_reason' => data_get($event, 'handoff_data.reason'),
+                'handoff_summary' => data_get($event, 'handoff_data.summary'),
+                'handoff_target_phone_number' => data_get($event, 'handoff_data.target_phone_number'),
+            ])
+            ->all();
+
+        $turns = $call->relationLoaded('turns')
+            ? $call->turns->map(fn ($turn) => [
+                'id' => $turn->id,
+                'speaker' => $turn->speaker,
+                'text' => $turn->text,
+                'confidence' => $turn->confidence,
+                'sequence' => $turn->sequence,
+                'meta' => $turn->meta,
+                'created_at' => $turn->created_at?->toIso8601String(),
+            ])->values()->all()
+            : [];
+
         return [
             'id' => $call->id,
             'external_sid' => $call->external_sid,
@@ -592,6 +803,12 @@ class BackofficeController extends Controller
             'status_label' => $this->statusLabel($call->status),
             'tone' => $this->statusTone($call->status),
             'direction' => $call->direction,
+            'channel' => $call->channel,
+            'channel_label' => $this->channelLabel($call->channel),
+            'conversation_status' => $call->conversation_status,
+            'conversation_status_label' => $this->conversationStatusLabel($call->conversation_status),
+            'resolution_type' => $call->resolution_type,
+            'resolution_label' => $this->resolutionLabel($call->resolution_type),
             'from_number' => $call->from_number,
             'to_number' => $call->to_number,
             'phone_label' => $call->phoneNumber?->label,
@@ -599,9 +816,14 @@ class BackofficeController extends Controller
             'ended_at' => $call->ended_at?->toIso8601String(),
             'duration_seconds' => is_numeric($durationSeconds) ? (int) $durationSeconds : null,
             'summary' => $call->summary,
+            'conversation_summary' => $call->conversation_summary,
+            'escalation_reason' => $call->escalation_reason,
+            'transcript' => $call->transcript,
             'transfer_failure_status' => data_get($call->metadata, 'transfer_failure_status'),
             'fallback_target' => data_get($call->metadata, 'fallback_target'),
             'recent_status_events' => $recentStatusEvents,
+            'conversation_relay_events' => $conversationRelayEvents,
+            'turns' => $turns,
             'message' => $call->message ? [
                 'caller_name' => $call->message->caller_name,
                 'caller_number' => $call->message->caller_number,
@@ -626,6 +848,44 @@ class BackofficeController extends Controller
                 'callback_due_at' => $call->message->callback_due_at?->toIso8601String(),
             ] : null,
         ];
+    }
+
+    private function channelLabel(?string $channel): ?string
+    {
+        return match ($channel) {
+            Call::CHANNEL_MENU => 'Menu DTMF',
+            Call::CHANNEL_VOICEMAIL => 'Messagerie',
+            Call::CHANNEL_CONVERSATION_AI => 'Conversation IA',
+            null, '' => null,
+            default => Str::headline(str_replace('_', ' ', $channel)),
+        };
+    }
+
+    private function conversationStatusLabel(?string $status): ?string
+    {
+        return match ($status) {
+            'routing' => 'Routage',
+            'active' => 'Actif',
+            'transfer_requested' => 'Transfert demandé',
+            'fallback_requested' => 'Fallback demandé',
+            'resolved' => 'Résolu',
+            'completed' => 'Terminé',
+            null, '' => null,
+            default => Str::headline(str_replace('_', ' ', $status)),
+        };
+    }
+
+    private function resolutionLabel(?string $resolutionType): ?string
+    {
+        return match ($resolutionType) {
+            'answered' => 'Répondu',
+            'transferred' => 'Transféré',
+            'voicemail' => 'Messagerie',
+            'failed' => 'Échec',
+            'after_hours' => 'Hors horaires',
+            null, '' => null,
+            default => Str::headline(str_replace('_', ' ', $resolutionType)),
+        };
     }
 
     private function mapMessage(CallMessage $message): array

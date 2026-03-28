@@ -12,6 +12,7 @@ use App\Support\ActivityLogger;
 use App\Support\TenantResolver;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -346,11 +347,25 @@ class TwilioVoiceWebhookController extends Controller
             }
 
             if ($this->shouldFallbackToVoicemail($dialStatus, $call)) {
+                $fallbackMessage = $this->contextualTransferFailureFallbackMessage($call);
                 $metadata['transfer_failure_status'] = $dialStatus;
                 $metadata['transfer_failed_at'] = now()->toIso8601String();
+                $metadata['transfer_failure_fallback_message'] = $fallbackMessage;
                 $metadata['fallback_target'] = 'voicemail';
                 $status = 'voicemail_prompted';
-                $fallbackResponse = $this->buildTransferFailureFallbackResponse($call);
+                $fallbackResponse = $this->buildTransferFailureFallbackResponse($fallbackMessage);
+
+                if (filled(data_get($call->metadata, 'conversation_transfer'))) {
+                    $metadata['conversation_transfer'] = $this->filterNullValues([
+                        ...((array) data_get($call->metadata, 'conversation_transfer', [])),
+                        'meta' => array_merge(
+                            (array) data_get($call->metadata, 'conversation_transfer.meta', []),
+                            [
+                                'effective_fallback_spoken_message' => $fallbackMessage,
+                            ],
+                        ) ?: null,
+                    ]);
+                }
 
                 if (! data_get($call->metadata, 'activity_flags.transfer_failed_logged')) {
                     $this->activityLogger->log(
@@ -528,6 +543,8 @@ class TwilioVoiceWebhookController extends Controller
         $targetPhoneNumber = data_get($handoffData, 'target_phone_number') ?: $call->tenant->agentConfig?->transfer_phone_number;
         $reason = data_get($handoffData, 'reason');
         $summary = data_get($handoffData, 'summary');
+        $fallbackSpokenMessage = data_get($handoffData, 'fallback_spoken_message');
+        $alreadyLogged = filled(data_get($call->metadata, 'conversation_transfer.requested_at'));
 
         if (! filled($targetPhoneNumber)) {
             return $this->handleConversationRelayFallback($request, $call, [
@@ -545,24 +562,34 @@ class TwilioVoiceWebhookController extends Controller
             'summary' => is_string($summary) ? $summary : $call->summary,
             'metadata' => array_merge($metadata, [
                 'conversation_transfer' => $this->filterNullValues([
+                    ...((array) data_get($call->metadata, 'conversation_transfer', [])),
                     'requested_at' => now()->toIso8601String(),
                     'target_phone_number' => $targetPhoneNumber,
                     'reason' => is_string($reason) ? $reason : null,
+                    'summary' => is_string($summary) ? $summary : null,
+                    'meta' => array_merge(
+                        (array) data_get($call->metadata, 'conversation_transfer.meta', []),
+                        $this->filterNullValues([
+                            'fallback_spoken_message' => is_string($fallbackSpokenMessage) ? $fallbackSpokenMessage : null,
+                        ]),
+                    ) ?: null,
                 ]),
             ]),
         ]);
 
-        $this->activityLogger->log(
-            tenant: $call->tenant,
-            eventType: 'transfer_attempted',
-            title: 'Transfert tente',
-            description: 'Le runtime conversationnel a demande une reprise humaine.',
-            call: $call->fresh(),
-            metadata: [
-                'transfer_phone_number' => $targetPhoneNumber,
-                'reason' => is_string($reason) ? $reason : null,
-            ],
-        );
+        if (! $alreadyLogged) {
+            $this->activityLogger->log(
+                tenant: $call->tenant,
+                eventType: 'transfer_attempted',
+                title: 'Transfert tente',
+                description: 'Le runtime conversationnel a demande une reprise humaine.',
+                call: $call->fresh(),
+                metadata: [
+                    'transfer_phone_number' => $targetPhoneNumber,
+                    'reason' => is_string($reason) ? $reason : null,
+                ],
+            );
+        }
 
         Log::info('twilio.webhook.conversation_relay_transfer', $this->webhookContext($request, $call, [
             'transfer_phone_number' => $targetPhoneNumber,
@@ -578,6 +605,8 @@ class TwilioVoiceWebhookController extends Controller
     {
         $reason = data_get($handoffData, 'reason');
         $summary = data_get($handoffData, 'summary');
+        $spokenMessage = data_get($handoffData, 'spoken_message');
+        $alreadyLogged = filled(data_get($call->metadata, 'conversation_fallback.requested_at'));
 
         $call->update([
             'status' => 'voicemail_prompted',
@@ -595,24 +624,30 @@ class TwilioVoiceWebhookController extends Controller
             ]),
         ]);
 
-        $this->activityLogger->log(
-            tenant: $call->tenant,
-            eventType: 'conversation_fallback_requested',
-            title: 'Fallback conversationnel',
-            description: 'Le mode conversationnel a ete interrompu et repasse vers la messagerie.',
-            call: $call->fresh(),
-            metadata: [
-                'reason' => is_string($reason) ? $reason : null,
-                'session_status' => $sessionStatus,
-            ],
-        );
+        if (! $alreadyLogged) {
+            $this->activityLogger->log(
+                tenant: $call->tenant,
+                eventType: 'conversation_fallback_requested',
+                title: 'Fallback conversationnel',
+                description: 'Le mode conversationnel a ete interrompu et repasse vers la messagerie.',
+                call: $call->fresh(),
+                metadata: [
+                    'reason' => is_string($reason) ? $reason : null,
+                    'session_status' => $sessionStatus,
+                ],
+            );
+        }
 
         Log::warning('twilio.webhook.conversation_relay_fallback', $this->webhookContext($request, $call, [
             'session_status' => $sessionStatus,
             'reason' => is_string($reason) ? $reason : null,
         ]));
 
-        return $this->conversationUnavailableFallbackResponse();
+        return $this->conversationUnavailableFallbackResponse(
+            is_string($spokenMessage) && filled($spokenMessage)
+                ? $spokenMessage
+                : null,
+        );
     }
 
     private function decodeHandoffData(string $handoffData): array
@@ -669,18 +704,105 @@ class TwilioVoiceWebhookController extends Controller
         return $call->message === null;
     }
 
-    private function buildTransferFailureFallbackResponse(Call $call): Response
+    private function buildTransferFailureFallbackResponse(string $message): Response
     {
         return $this->xmlResponse($this->buildTwiml([
-            $this->say('La ligne humaine est indisponible pour le moment. Merci de laisser un message après le bip.'),
+            $this->say($message),
             $this->record(route('webhooks.twilio.voice.recording', absolute: true)),
         ]));
     }
 
-    private function conversationUnavailableFallbackResponse(): Response
+    private function transferFailureFallbackMessage(Call $call): string
+    {
+        $message = data_get($call->metadata, 'conversation_transfer.meta.fallback_spoken_message');
+
+        if (is_string($message) && filled($message)) {
+            return $message;
+        }
+
+        return 'La ligne humaine est indisponible pour le moment. Merci de laisser un message après le bip.';
+    }
+
+    private function contextualTransferFailureFallbackMessage(Call $call): string
+    {
+        $message = $this->transferFailureFallbackMessage($call);
+
+        if (filled(data_get($call->metadata, 'conversation_transfer.meta.fallback_spoken_message'))) {
+            return $message;
+        }
+
+        $context = $this->transferFailureFallbackContext($call);
+
+        if ($context === null) {
+            return $message;
+        }
+
+        return 'La ligne humaine est indisponible pour le moment. Merci de laisser votre nom, votre numero et votre demande concernant '.$context.' apres le bip.';
+    }
+
+    private function transferFailureFallbackContext(Call $call): ?string
+    {
+        $candidates = array_filter([
+            data_get($call->metadata, 'conversation_transfer.summary'),
+            $call->conversation_summary,
+            $call->summary,
+        ], fn ($value) => is_string($value) && filled($value));
+
+        foreach ($candidates as $candidate) {
+            $context = $this->sanitizeTransferFallbackContext($candidate);
+
+            if ($context !== null) {
+                return $context;
+            }
+        }
+
+        return null;
+    }
+
+    private function sanitizeTransferFallbackContext(string $candidate): ?string
+    {
+        $context = trim($candidate);
+        $context = preg_replace('/^(le|la)\s+(caller|client|appelant)\s+(a\s+)?(demande|souhaite|veut)\s+/i', '', $context) ?? $context;
+        $context = preg_replace('/^(une|un)\s+demande\s+de\s+/i', '', $context) ?? $context;
+        $context = preg_replace('/^concernant\s+/i', '', $context) ?? $context;
+        $context = trim($context, " \t\n\r\0\x0B.:;!?");
+
+        if ($context === '') {
+            return null;
+        }
+
+        $normalized = Str::of($context)
+            ->ascii()
+            ->lower()
+            ->replaceMatches('/[^a-z0-9\s]/', ' ')
+            ->replaceMatches('/\s+/', ' ')
+            ->trim()
+            ->value();
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        foreach ([
+            'parler a un humain',
+            'parler a quelqu un',
+            'reprise humaine',
+            'transfert humain',
+            'transfert',
+            'escalade',
+        ] as $genericPhrase) {
+            if (str_contains($normalized, $genericPhrase)) {
+                return null;
+            }
+        }
+
+        return Str::limit($context, 96, '...');
+    }
+
+    private function conversationUnavailableFallbackResponse(?string $message = null): Response
     {
         return $this->xmlResponse($this->buildTwiml([
-            $this->say('Notre standard conversationnel est temporairement indisponible. Merci de laisser un message après le bip.'),
+            $this->say($message ?: 'Notre standard conversationnel est temporairement indisponible. Merci de laisser un message après le bip.'),
             $this->record(route('webhooks.twilio.voice.recording', absolute: true)),
         ]));
     }

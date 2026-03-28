@@ -6,7 +6,15 @@ import ToneBadge from '@/components/dashboard/ToneBadge.vue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import AppLayout from '@/layouts/AppLayout.vue';
-import type { ActivityItem, CallItem, IntegrationItem, ServiceStatus, TenantSummary, WorkspaceSummary } from '@/types/backoffice';
+import type {
+    ActivityItem,
+    CallItem,
+    ConversationMetric,
+    IntegrationItem,
+    ServiceStatus,
+    TenantSummary,
+    WorkspaceSummary,
+} from '@/types/backoffice';
 import { Head, Link } from '@inertiajs/vue3';
 import { ArrowRight, BellRing, Clock3, PhoneCall, ShieldCheck } from 'lucide-vue-next';
 
@@ -21,6 +29,9 @@ interface Props {
         description: string;
     };
     recentCalls: CallItem[];
+    conversationMetrics: ConversationMetric[];
+    conversationAnalytics: ConversationMetric[];
+    conversationReliabilityMetrics: ConversationMetric[];
     activityFeed: ActivityItem[];
     alerts: Array<{
         title: string;
@@ -130,6 +141,80 @@ const serviceMarkers = [
                                     <span class="text-sm font-medium">{{ step.label }}</span>
                                     <ToneBadge :label="step.done ? 'OK' : 'À faire'" :tone="step.done ? 'success' : 'warning'" />
                                 </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card class="border-border/70 bg-background/95 shadow-[0_16px_45px_-28px_rgba(15,23,42,0.28)]">
+                        <CardHeader class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                            <div>
+                                <CardDescription>Conversation IA</CardDescription>
+                                <CardTitle>Statistiques de resolution</CardTitle>
+                            </div>
+                            <Button as-child variant="outline">
+                                <Link :href="route('dashboard.calls', { status: 'transferred' })">Voir les escalades</Link>
+                            </Button>
+                        </CardHeader>
+                        <CardContent class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                            <div
+                                v-for="metric in conversationMetrics"
+                                :key="metric.label"
+                                class="rounded-2xl border border-border/60 bg-muted/20 px-4 py-4"
+                            >
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="space-y-2">
+                                        <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">{{ metric.label }}</p>
+                                        <p class="text-2xl font-semibold tracking-tight text-foreground">{{ metric.value }}</p>
+                                    </div>
+                                    <ToneBadge :label="String(metric.value)" :tone="metric.tone" />
+                                </div>
+                                <p class="mt-3 text-sm leading-6 text-muted-foreground">{{ metric.description }}</p>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card class="border-border/70 bg-background/95 shadow-[0_16px_45px_-28px_rgba(15,23,42,0.28)]">
+                        <CardHeader>
+                            <CardDescription>Conversation IA</CardDescription>
+                            <CardTitle>Analytics conversationnelles</CardTitle>
+                        </CardHeader>
+                        <CardContent class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                            <div
+                                v-for="metric in conversationAnalytics"
+                                :key="metric.label"
+                                class="rounded-2xl border border-border/60 bg-background px-4 py-4"
+                            >
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="space-y-2">
+                                        <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">{{ metric.label }}</p>
+                                        <p class="text-xl font-semibold tracking-tight text-foreground">{{ metric.value }}</p>
+                                    </div>
+                                    <ToneBadge :label="String(metric.value)" :tone="metric.tone" />
+                                </div>
+                                <p class="mt-3 text-sm leading-6 text-muted-foreground">{{ metric.description }}</p>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card class="border-border/70 bg-background/95 shadow-[0_16px_45px_-28px_rgba(15,23,42,0.28)]">
+                        <CardHeader>
+                            <CardDescription>Conversation IA</CardDescription>
+                            <CardTitle>Fiabilite LLM</CardTitle>
+                        </CardHeader>
+                        <CardContent class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                            <div
+                                v-for="metric in conversationReliabilityMetrics"
+                                :key="metric.label"
+                                class="rounded-2xl border border-border/60 bg-muted/20 px-4 py-4"
+                            >
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="space-y-2">
+                                        <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">{{ metric.label }}</p>
+                                        <p class="text-xl font-semibold tracking-tight text-foreground">{{ metric.value }}</p>
+                                    </div>
+                                    <ToneBadge :label="String(metric.value)" :tone="metric.tone" />
+                                </div>
+                                <p class="mt-3 text-sm leading-6 text-muted-foreground">{{ metric.description }}</p>
                             </div>
                         </CardContent>
                     </Card>

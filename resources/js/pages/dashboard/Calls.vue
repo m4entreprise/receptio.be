@@ -165,6 +165,16 @@ const resetFilters = () => {
                                     <div class="space-y-2">
                                         <ToneBadge :label="call.status_label" :tone="call.tone" />
                                         <ToneBadge
+                                            v-if="call.channel === 'conversation_ai' && call.channel_label"
+                                            :label="call.channel_label"
+                                            tone="neutral"
+                                        />
+                                        <ToneBadge
+                                            v-if="call.channel === 'conversation_ai' && call.resolution_label"
+                                            :label="call.resolution_label"
+                                            :tone="call.tone"
+                                        />
+                                        <ToneBadge
                                             v-if="call.message?.workflow_status_label"
                                             :label="call.message.workflow_status_label"
                                             :tone="call.message.workflow_status_tone ?? 'neutral'"
@@ -178,6 +188,9 @@ const resetFilters = () => {
                                     </div>
                                     <div class="space-y-2 text-sm text-muted-foreground">
                                         <p>{{ call.summary ?? 'Aucun résumé disponible.' }}</p>
+                                        <p v-if="call.escalation_reason" class="text-xs text-amber-700">
+                                            Escalade: {{ call.escalation_reason }}
+                                        </p>
                                         <p
                                             v-if="call.transfer_failure_status && call.fallback_target === 'voicemail'"
                                             class="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
