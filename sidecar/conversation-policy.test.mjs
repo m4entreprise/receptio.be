@@ -101,6 +101,79 @@ test('applies structured clarification rules from conversation_prompt', () => {
     assert.match(action.reply, /numero de reference/i);
 });
 
+test('clarifies appointment requests before routing them to a human', () => {
+    const action = decideConversationAction({
+        bootstrap: bootstrap(),
+        state: deriveConversationState(bootstrap()),
+        userText: 'Je voudrais prendre un rendez-vous pour un soin du visage.',
+    });
+
+    assert.equal(action.type, 'clarify');
+    assert.equal(action.intent, 'appointment_request');
+    assert.equal(action.reason, 'appointment_request_needs_details');
+    assert.match(action.reply, /prestation souhaitez[- ]vous/i);
+});
+
+test('transfers appointment requests after the appointment clarification turn', () => {
+    const appointmentBootstrap = bootstrap({
+        turns: [
+            {
+                speaker: 'assistant',
+                text: 'Je peux transmettre une demande de rendez vous a l institut.',
+                meta: {
+                    decision: 'clarify',
+                    intent: 'appointment_request',
+                },
+            },
+        ],
+    });
+
+    const action = decideConversationAction({
+        bootstrap: appointmentBootstrap,
+        state: deriveConversationState(appointmentBootstrap),
+        userText: 'Ce serait pour mardi apres-midi pour un massage relaxant.',
+    });
+
+    assert.equal(action.type, 'transfer');
+    assert.equal(action.intent, 'appointment_request');
+    assert.equal(action.reason, 'appointment_request_requires_human');
+    assert.match(action.fallbackMessage, /prestation souhaitee/i);
+});
+
+test('falls back to voicemail for appointment requests when no transfer is available', () => {
+    const appointmentBootstrap = bootstrap({
+        agent: {
+            faq_content: '',
+            max_clarification_turns: 2,
+            transfer_phone_number: null,
+            conversation_prompt:
+                'Messagerie: Merci de laisser votre nom, votre numero, la prestation souhaitee et votre disponibilite apres le bip.',
+        },
+        turns: [
+            {
+                speaker: 'assistant',
+                text: 'Je peux transmettre une demande de rendez vous a l institut.',
+                meta: {
+                    decision: 'clarify',
+                    intent: 'appointment_request',
+                },
+            },
+        ],
+    });
+
+    const action = decideConversationAction({
+        bootstrap: appointmentBootstrap,
+        state: deriveConversationState(appointmentBootstrap),
+        userText: 'Je voudrais annuler mon rendez-vous de vendredi.',
+    });
+
+    assert.equal(action.type, 'fallback');
+    assert.equal(action.intent, 'appointment_request');
+    assert.equal(action.reason, 'appointment_request_requires_human');
+    assert.equal(action.target, 'voicemail');
+    assert.match(action.reply, /votre disponibilite apres le bip/i);
+});
+
 test('requests a transfer when the caller explicitly asks for a human', () => {
     const action = decideConversationAction({
         bootstrap: bootstrap(),

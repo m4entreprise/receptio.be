@@ -1,5 +1,23 @@
 import { decideConversationAction, findFaqCandidates } from './conversation-policy.mjs';
 
+function enforceProductConstraints(decision, fallbackDecision) {
+    if (fallbackDecision?.intent !== 'appointment_request') {
+        return decision;
+    }
+
+    if (!['clarify', 'transfer', 'fallback'].includes(decision.type)) {
+        return fallbackDecision;
+    }
+
+    return {
+        ...decision,
+        intent: 'appointment_request',
+        reason: decision.reason ?? fallbackDecision.reason,
+        summary: decision.summary ?? fallbackDecision.summary,
+        fallbackMessage: decision.fallbackMessage ?? fallbackDecision.fallbackMessage ?? null,
+    };
+}
+
 function sanitizeDecision(rawDecision, fallbackDecision) {
     const allowedTypes = new Set(['answer', 'clarify', 'transfer', 'fallback', 'hangup']);
     const allowedTargets = new Set(['voicemail', 'hangup']);
@@ -8,10 +26,11 @@ function sanitizeDecision(rawDecision, fallbackDecision) {
         return fallbackDecision;
     }
 
-    return {
+    return enforceProductConstraints({
         ...fallbackDecision,
         ...rawDecision,
         type: rawDecision.type,
+        intent: typeof rawDecision.intent === 'string' && rawDecision.intent.trim() !== '' ? rawDecision.intent : fallbackDecision.intent ?? null,
         reply: typeof rawDecision.reply === 'string' ? rawDecision.reply : fallbackDecision.reply ?? null,
         summary: typeof rawDecision.summary === 'string' && rawDecision.summary.trim() !== '' ? rawDecision.summary : fallbackDecision.summary,
         reason: typeof rawDecision.reason === 'string' && rawDecision.reason.trim() !== '' ? rawDecision.reason : fallbackDecision.reason,
@@ -24,7 +43,7 @@ function sanitizeDecision(rawDecision, fallbackDecision) {
             typeof rawDecision.fallbackMessage === 'string' && rawDecision.fallbackMessage.trim() !== ''
                 ? rawDecision.fallbackMessage
                 : fallbackDecision.fallbackMessage ?? null,
-    };
+    }, fallbackDecision);
 }
 
 function compactTurns(turns) {
@@ -51,6 +70,7 @@ function buildPrompt({ bootstrap, state, userText, fallbackDecision }) {
         '- clarifier au maximum jusqu a la limite fournie',
         '- transferer si le caller demande un humain, si la politique du tenant le demande, ou si le sujet sort du perimetre',
         '- fallback vers messagerie si aucun transfert humain n est disponible',
+        '- si la demande concerne un rendez-vous, une modification ou une annulation de rendez-vous: ne jamais confirmer une action agenda, demander au plus une clarification puis transferer ou basculer vers une prise de message structuree',
         '- repondre en francais, concis, operationnel',
         '',
         `Demande caller: ${userText}`,

@@ -174,6 +174,7 @@ export class ConversationSession {
                     ...decisionRuntimeMeta(decision, decisionSource),
                     decision: 'clarify',
                     kind: 'clarification',
+                    intent: decision.intent ?? null,
                 });
                 this.state.clarificationCount += 1;
                 this.transport.send(createTextMessage(decision.reply));
@@ -198,6 +199,7 @@ export class ConversationSession {
                 await this.persistTurn('assistant', 'Je vous transfere vers un humain.', {
                     ...decisionRuntimeMeta(decision, decisionSource),
                     decision: 'transfer',
+                    intent: decision.intent ?? null,
                 });
                 await this.realtimeClient.storeTransfer(this.callSid, {
                     reason: decision.reason,
@@ -220,6 +222,7 @@ export class ConversationSession {
                 await this.persistTurn('assistant', decision.reply ?? 'Je vais prendre un message pour l equipe.', {
                     ...decisionRuntimeMeta(decision, decisionSource),
                     decision: 'fallback',
+                    intent: decision.intent ?? null,
                 });
                 await this.realtimeClient.storeFallback(this.callSid, {
                     reason: decision.reason,

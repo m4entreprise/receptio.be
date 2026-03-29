@@ -110,3 +110,54 @@ test('session escalates to transfer on explicit human request', async () => {
     assert.equal(handoffData.action, 'transfer');
     assert.equal(handoffData.reason, 'caller_requested_human');
 });
+
+test('session clarifies appointment requests before transferring them to a human', async () => {
+    const realtimeClient = createRealtimeClient();
+    const outboundMessages = [];
+    const session = new ConversationSession({
+        realtimeClient,
+        transport: {
+            send(payload) {
+                outboundMessages.push(payload);
+            },
+        },
+        logger: {
+            info() {},
+            warn() {},
+            error() {},
+        },
+    });
+
+    await session.handleMessage({
+        type: 'setup',
+        callSid: 'CA_TEST',
+        sessionId: 'VX_TEST',
+    });
+
+    await session.handleMessage({
+        type: 'prompt',
+        voicePrompt: 'Je voudrais prendre un rendez-vous pour un soin du visage.',
+        last: true,
+        lang: 'fr-FR',
+    });
+
+    assert.equal(realtimeClient.calls[1][0], 'turn');
+    assert.equal(realtimeClient.calls[1][2].meta.decision, 'clarify');
+    assert.equal(realtimeClient.calls[1][2].meta.intent, 'appointment_request');
+    assert.equal(outboundMessages[0].type, 'text');
+    assert.match(outboundMessages[0].token, /quelle prestation souhaitez-vous/i);
+
+    await session.handleMessage({
+        type: 'prompt',
+        voicePrompt: 'Ce serait mardi apres-midi pour un massage relaxant.',
+        last: true,
+        lang: 'fr-FR',
+    });
+
+    assert.equal(realtimeClient.calls.at(-1)[0], 'transfer');
+    const handoffData = JSON.parse(outboundMessages.at(-1).handoffData);
+
+    assert.equal(handoffData.action, 'transfer');
+    assert.equal(handoffData.reason, 'appointment_request_requires_human');
+    assert.match(handoffData.fallback_spoken_message, /prestation souhaitee/i);
+});

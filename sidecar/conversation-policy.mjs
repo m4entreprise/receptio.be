@@ -15,6 +15,12 @@ const GOODBYE_PATTERNS = [
 
 const VOICEMAIL_PATTERNS = [/\b(laisser un message|prendre un message|rappel(?:ez)?[- ]?moi|messagerie|bo[iî]te vocale)\b/u];
 
+const APPOINTMENT_PATTERNS = [
+    /\b(rendez vous|rdv)\b/u,
+    /\b(prendre|planifier|reserver|booker)\b.*\b(rendez vous|rdv|creneau)\b/u,
+    /\b(modifier|annuler|reporter|deplacer|decaler)\b.*\b(rendez vous|rdv)\b/u,
+];
+
 function unique(items) {
     return [...new Set(items.filter(Boolean))];
 }
@@ -339,6 +345,54 @@ function summarize(text, fallback = 'Demande conversationnelle en attente de rep
     return cleaned.length <= 180 ? cleaned : `${cleaned.slice(0, 177).trimEnd()}...`;
 }
 
+function appointmentSummary(text) {
+    return summarize(text, 'Le caller souhaite organiser un rendez vous et doit etre repris par l equipe.');
+}
+
+function appointmentVoicemailInstruction(promptPolicy) {
+    return (
+        promptPolicy?.voicemailInstruction ??
+        'Merci de laisser votre nom, votre numero, la prestation souhaitee ainsi que le jour ou le creneau ideal apres le bip.'
+    );
+}
+
+function hasPendingAppointmentClarification(turns) {
+    const latestAssistantTurn = [...(Array.isArray(turns) ? turns : [])]
+        .reverse()
+        .find((turn) => turn?.speaker === 'assistant');
+
+    return (
+        latestAssistantTurn?.meta?.decision === 'clarify' &&
+        latestAssistantTurn?.meta?.intent === 'appointment_request'
+    );
+}
+
+function appointmentFollowupDecision({ trimmed, transferPhoneNumber, promptPolicy }) {
+    const summary = appointmentSummary(trimmed);
+    const voicemailInstruction = appointmentVoicemailInstruction(promptPolicy);
+
+    if (transferPhoneNumber) {
+        return {
+            type: 'transfer',
+            intent: 'appointment_request',
+            reason: 'appointment_request_requires_human',
+            summary,
+            targetPhoneNumber: transferPhoneNumber,
+            fallbackMessage: voicemailInstruction,
+        };
+    }
+
+    return {
+        type: 'fallback',
+        intent: 'appointment_request',
+        reason: 'appointment_request_requires_human',
+        summary,
+        target: 'voicemail',
+        reply: voicemailInstruction,
+        fallbackMessage: voicemailInstruction,
+    };
+}
+
 function clarificationCount(turns) {
     return turns.filter(
         (turn) =>
@@ -364,6 +418,8 @@ export function decideConversationAction({ bootstrap, state, userText, digit = n
     const trimmed = String(userText ?? '').trim();
     const transferPhoneNumber = state?.transferPhoneNumber ?? bootstrap?.agent?.transfer_phone_number ?? null;
     const promptPolicy = state?.promptPolicy ?? parsePromptDirectives(bootstrap?.agent?.conversation_prompt);
+    const appointmentIntentDetected = hasPattern(normalized, APPOINTMENT_PATTERNS);
+    const pendingAppointmentClarification = hasPendingAppointmentClarification(bootstrap?.turns);
     const remainingClarifications = Math.max(
         0,
         (state?.maxClarificationTurns ?? bootstrap?.agent?.max_clarification_turns ?? 2) -
@@ -436,6 +492,25 @@ export function decideConversationAction({ bootstrap, state, userText, digit = n
             reason: 'tenant_policy_clarification',
             summary: summarize(trimmed, 'La politique du tenant impose une clarification.'),
         };
+    }
+
+    if (appointmentIntentDetected || pendingAppointmentClarification) {
+        if (!pendingAppointmentClarification && (state?.clarificationCount ?? 0) === 0 && remainingClarifications > 0) {
+            return {
+                type: 'clarify',
+                intent: 'appointment_request',
+                reply:
+                    'Je peux transmettre une demande de rendez vous a l institut. Quelle prestation souhaitez-vous, et idealement quel jour ou quel moment vous conviendrait ?',
+                reason: 'appointment_request_needs_details',
+                summary: appointmentSummary(trimmed),
+            };
+        }
+
+        return appointmentFollowupDecision({
+            trimmed,
+            transferPhoneNumber,
+            promptPolicy,
+        });
     }
 
     if (hasPattern(normalized, VOICEMAIL_PATTERNS) && !transferPhoneNumber) {

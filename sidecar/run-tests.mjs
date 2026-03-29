@@ -145,6 +145,85 @@ const tests = [
         },
     },
     {
+        name: 'policy clarifies appointment requests before routing them to a human',
+        run() {
+            const action = decideConversationAction({
+                bootstrap: bootstrap(),
+                state: deriveConversationState(bootstrap()),
+                userText: 'Je voudrais prendre un rendez-vous pour un soin du visage.',
+            });
+
+            assert.equal(action.type, 'clarify');
+            assert.equal(action.intent, 'appointment_request');
+            assert.equal(action.reason, 'appointment_request_needs_details');
+            assert.match(action.reply, /prestation souhaitez-vous/i);
+        },
+    },
+    {
+        name: 'policy transfers appointment requests after the appointment clarification turn',
+        run() {
+            const appointmentBootstrap = bootstrap({
+                turns: [
+                    {
+                        speaker: 'assistant',
+                        text: 'Je peux transmettre une demande de rendez vous a l institut.',
+                        meta: {
+                            decision: 'clarify',
+                            intent: 'appointment_request',
+                        },
+                    },
+                ],
+            });
+
+            const action = decideConversationAction({
+                bootstrap: appointmentBootstrap,
+                state: deriveConversationState(appointmentBootstrap),
+                userText: 'Ce serait pour mardi apres-midi pour un massage relaxant.',
+            });
+
+            assert.equal(action.type, 'transfer');
+            assert.equal(action.intent, 'appointment_request');
+            assert.equal(action.reason, 'appointment_request_requires_human');
+            assert.match(action.fallbackMessage, /prestation souhaitee/i);
+        },
+    },
+    {
+        name: 'policy falls back to voicemail for appointment requests when no transfer is available',
+        run() {
+            const appointmentBootstrap = bootstrap({
+                agent: {
+                    faq_content: '',
+                    max_clarification_turns: 2,
+                    transfer_phone_number: null,
+                    conversation_prompt:
+                        'Messagerie: Merci de laisser votre nom, votre numero, la prestation souhaitee et votre disponibilite apres le bip.',
+                },
+                turns: [
+                    {
+                        speaker: 'assistant',
+                        text: 'Je peux transmettre une demande de rendez vous a l institut.',
+                        meta: {
+                            decision: 'clarify',
+                            intent: 'appointment_request',
+                        },
+                    },
+                ],
+            });
+
+            const action = decideConversationAction({
+                bootstrap: appointmentBootstrap,
+                state: deriveConversationState(appointmentBootstrap),
+                userText: 'Je voudrais annuler mon rendez-vous de vendredi.',
+            });
+
+            assert.equal(action.type, 'fallback');
+            assert.equal(action.intent, 'appointment_request');
+            assert.equal(action.reason, 'appointment_request_requires_human');
+            assert.equal(action.target, 'voicemail');
+            assert.match(action.reply, /votre disponibilite apres le bip/i);
+        },
+    },
+    {
         name: 'policy escalates explicit human requests',
         run() {
             const action = decideConversationAction({
@@ -266,6 +345,43 @@ const tests = [
             assert.equal(action.decisionSource, 'openai');
             assert.match(capturedBody.input, /Rue de la Loi 1, Bruxelles/);
             assert.match(capturedBody.input, /FAQ candidates:/);
+        },
+    },
+    {
+        name: 'openai decision engine keeps appointment requests within V1-safe constraints',
+        async run() {
+            const engine = createDecisionEngine({
+                provider: 'openai',
+                openAiApiKey: 'test-key',
+                openAiModel: 'gpt-5.4-mini',
+                fetchImpl: async () => ({
+                    ok: true,
+                    async json() {
+                        return {
+                            output_text: JSON.stringify({
+                                type: 'answer',
+                                reply: 'Parfait, votre rendez-vous est confirme mardi a 15 heures.',
+                                summary: 'Rendez-vous confirme.',
+                                reason: 'appointment_confirmed',
+                            }),
+                        };
+                    },
+                }),
+                logger: {
+                    warn() {},
+                },
+            });
+
+            const action = await engine.decide({
+                bootstrap: bootstrap(),
+                state: deriveConversationState(bootstrap()),
+                userText: 'Je voudrais prendre un rendez-vous pour un soin du visage.',
+            });
+
+            assert.equal(action.type, 'clarify');
+            assert.equal(action.intent, 'appointment_request');
+            assert.equal(action.reason, 'appointment_request_needs_details');
+            assert.doesNotMatch(action.reply, /confirme mardi/i);
         },
     },
     {
@@ -410,6 +526,59 @@ const tests = [
 
             assert.equal(handoffData.action, 'transfer');
             assert.equal(handoffData.reason, 'caller_requested_human');
+        },
+    },
+    {
+        name: 'session clarifies appointment requests before transferring them to a human',
+        async run() {
+            const realtimeClient = createRealtimeClient();
+            const outboundMessages = [];
+            const session = new ConversationSession({
+                realtimeClient,
+                transport: {
+                    send(payload) {
+                        outboundMessages.push(payload);
+                    },
+                },
+                logger: {
+                    info() {},
+                    warn() {},
+                    error() {},
+                },
+            });
+
+            await session.handleMessage({
+                type: 'setup',
+                callSid: 'CA_TEST',
+                sessionId: 'VX_TEST',
+            });
+
+            await session.handleMessage({
+                type: 'prompt',
+                voicePrompt: 'Je voudrais prendre un rendez-vous pour un soin du visage.',
+                last: true,
+                lang: 'fr-FR',
+            });
+
+            assert.equal(realtimeClient.calls[1][0], 'turn');
+            assert.equal(realtimeClient.calls[1][2].meta.decision, 'clarify');
+            assert.equal(realtimeClient.calls[1][2].meta.intent, 'appointment_request');
+            assert.equal(outboundMessages[0].type, 'text');
+            assert.match(outboundMessages[0].token, /quelle prestation souhaitez-vous/i);
+
+            await session.handleMessage({
+                type: 'prompt',
+                voicePrompt: 'Ce serait mardi apres-midi pour un massage relaxant.',
+                last: true,
+                lang: 'fr-FR',
+            });
+
+            assert.equal(realtimeClient.calls.at(-1)[0], 'transfer');
+            const handoffData = JSON.parse(outboundMessages.at(-1).handoffData);
+
+            assert.equal(handoffData.action, 'transfer');
+            assert.equal(handoffData.reason, 'appointment_request_requires_human');
+            assert.match(handoffData.fallback_spoken_message, /prestation souhaitee/i);
         },
     },
     {
