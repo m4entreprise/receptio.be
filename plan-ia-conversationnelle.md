@@ -27,6 +27,7 @@ Faire de ReceptioAI un **receptionniste conversationnel** capable de comprendre 
 - statistiques conversationnelles de resolution exposees dans le dashboard backoffice
 - analytics conversationnelles fines exposees dans le dashboard backoffice sur les tours, clarifications, usage OpenAI et escalades
 - analytics de fiabilite LLM exposees dans le dashboard backoffice sur tentatives OpenAI, succes, timeouts, latence et fallbacks
+- gestion des limites de consommation OpenAI via timeout configurable (12s par defaut) et variables d'environnement `CONVERSATION_OPENAI_TIMEOUT_MS`
 - tests Laravel pour runtime conversationnel et backoffice
 - tests Node locaux pour la politique conversationnelle et la session sidecar
 
@@ -158,6 +159,13 @@ Tous ces endpoints sont reserves au sidecar et proteges par un token serveur a s
 - `conversation_enabled` bool
 - `conversation_prompt` text nullable
 - `max_clarification_turns` int default `2`
+
+### Variables d'environnement pour la gestion OpenAI
+
+- `CONVERSATION_OPENAI_TIMEOUT_MS=12000` : timeout pour les requetes OpenAI (12s par defaut)
+- `CONVERSATION_OPENAI_MODEL` : modele OpenAI utilise (defaut: `OPENAI_TEXT_MODEL`)
+- `OPENAI_API_KEY` : cle API OpenAI
+- `CONVERSATION_DECISION_PROVIDER` : 'heuristic' ou 'openai'
 
 ### Donnees deja reutilisees
 
